@@ -2,43 +2,65 @@
 const express = require('express');
 const router = express.Router();
 const Crime = require('../models/crime'); // Assuming your Mongoose model is here
+const { protect, authorize } = require('../middleware/authMiddleware');
+const { body, param, query, validationResult } = require('express-validator');
 
 // --- API Endpoints for Crime Data --- //
 
 // GET all crime data (potentially with pagination and filtering for advanced use)
 // Example: GET /api/crime?limit=10&page=1&type=Theft&status=Reported&sortBy=date:desc
-router.get('/', async (req, res) => {
+
+const getAllCrimesValidationRules = [
+  query('page').optional().isInt({ min: 1 }).toInt().withMessage('Page must be a positive integer.'),
+  query('limit').optional().isInt({ min: 1, max: 200 }).toInt().withMessage('Limit must be between 1 and 200.'),
+  query('type').optional().trim().escape(),
+  query('status').optional().isIn(['Reported', 'Under Investigation', 'Resolved', 'Closed']).withMessage('Invalid status for query.'),
+  query('severity').optional().isIn(['Low', 'Medium', 'High', 'Critical']).withMessage('Invalid severity for query.'),
+  query('startDate').optional().isISO8601().toDate().withMessage('Invalid start date format.'),
+  query('endDate').optional().isISO8601().toDate().withMessage('Invalid end date format.'),
+  query('sortBy').optional().matches(/^[a-zA-Z_]+:(asc|desc)$/).withMessage('Invalid sortBy format. Use field:asc or field:desc.').trim()
+];
+
+router.get('/', protect, getAllCrimesValidationRules, async (req, res) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    return res.status(400).json({ message: 'Validation failed for query parameters.', errors: errors.array() });
+  }
+
   try {
+    // Access validated query parameters using req.query
+    const { page: reqPage, limit: reqLimit, type: reqType, status: reqStatus, severity: reqSeverity, startDate: reqStartDate, endDate: reqEndDate, sortBy: reqSortBy } = req.query;
+
     // Basic query object
-    let query = {};
+    let queryBuilder = {}; // Renamed to avoid conflict with 'query' from express-validator
     // Advanced Filtering (examples)
-    if (req.query.type) query.type = req.query.type;
-    if (req.query.status) query.status = req.query.status;
-    if (req.query.severity) query.severity = req.query.severity;
-    if (req.query.startDate && req.query.endDate) {
-      query.date = { $gte: new Date(req.query.startDate), $lte: new Date(req.query.endDate) };
-    } else if (req.query.startDate) {
-      query.date = { $gte: new Date(req.query.startDate) };
-    } else if (req.query.endDate) {
-      query.date = { $lte: new Date(req.query.endDate) };
+    if (reqType) queryBuilder.type = reqType;
+    if (reqStatus) queryBuilder.status = reqStatus;
+    if (reqSeverity) queryBuilder.severity = reqSeverity;
+    if (reqStartDate && reqEndDate) {
+      queryBuilder.date = { $gte: reqStartDate, $lte: reqEndDate };
+    } else if (reqStartDate) {
+      queryBuilder.date = { $gte: reqStartDate };
+    } else if (reqEndDate) {
+      queryBuilder.date = { $lte: reqEndDate };
     }
 
     // Pagination (example)
-    const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 100; // Default to 100, adjust as needed for map/chart
+    const page = reqPage || 1;
+    const limit = reqLimit || 100;
     const skip = (page - 1) * limit;
 
     // Sorting (example: 'date:desc' or 'severity:asc')
     let sort = {};
-    if (req.query.sortBy) {
-      const parts = req.query.sortBy.split(':');
+    if (reqSortBy) {
+      const parts = reqSortBy.split(':');
       sort[parts[0]] = parts[1] === 'desc' ? -1 : 1;
     } else {
       sort = { date: -1 }; // Default sort by newest first
     }
 
-    const crimes = await Crime.find(query).sort(sort).skip(skip).limit(limit).lean(); // .lean() for faster plain JS objects
-    const totalCrimes = await Crime.countDocuments(query);
+    const crimes = await Crime.find(queryBuilder).sort(sort).skip(skip).limit(limit).lean(); // .lean() for faster plain JS objects
+    const totalCrimes = await Crime.countDocuments(queryBuilder);
 
     // For the frontend map, it might expect 'id', 'lat', 'lng'. Ensure model provides these or transform here.
     // The model's pre-save hook should handle lat/lng from location.coordinates.
@@ -72,11 +94,26 @@ router.get('/', async (req, res) => {
 
 // GET crime data trends (for charts)
 // Example: GET /api/crime/trends?period=monthly&crimeType=Theft
-router.get('/trends', async (req, res) => {
+
+const getTrendsValidationRules = [
+  query('period').optional().isIn(['daily', 'monthly', 'yearly']).withMessage('Invalid period for trends.'),
+  query('crimeType').optional().trim().escape(),
+  query('startDate').optional().isISO8601().toDate().withMessage('Invalid start date format.'),
+  query('endDate').optional().isISO8601().toDate().withMessage('Invalid end date format.')
+];
+
+router.get('/trends', protect, getTrendsValidationRules, async (req, res) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    return res.status(400).json({ message: 'Validation failed for trend query parameters.', errors: errors.array() });
+  }
+
   try {
+    const { period: reqPeriod, crimeType: reqCrimeType, startDate: reqStartDate, endDate: reqEndDate } = req.query;
+
     // Advanced: Allow grouping by day, week, month, year, and filtering by crime type, location, etc.
     // For simplicity, this example groups by date (day by default in schema, adjust format for month/year)
-    const period = req.query.period || 'daily'; // daily, monthly, yearly
+    const period = reqPeriod || 'daily'; // daily, monthly, yearly
     let groupByFormat;
     switch (period) {
         case 'yearly': groupByFormat = '%Y'; break;
@@ -87,12 +124,16 @@ router.get('/trends', async (req, res) => {
 
     // Add match stage for filtering if needed (e.g., by crime type, date range)
     const matchStage = {};
-    if (req.query.crimeType) {
-        matchStage.type = req.query.crimeType;
+    if (reqCrimeType) {
+        matchStage.type = reqCrimeType;
     }
     // Add date range filtering for trends as well
-    if (req.query.startDate && req.query.endDate) {
-      matchStage.date = { $gte: new Date(req.query.startDate), $lte: new Date(req.query.endDate) };
+    if (reqStartDate && reqEndDate) {
+      matchStage.date = { $gte: reqStartDate, $lte: reqEndDate };
+    } else if (reqStartDate) {
+      matchStage.date = { $gte: reqStartDate };
+    } else if (reqEndDate) {
+      matchStage.date = { $lte: reqEndDate };
     }
 
     const crimeTrends = await Crime.aggregate([
@@ -115,14 +156,28 @@ router.get('/trends', async (req, res) => {
 
 // POST new crime data (for data entry or integration with other systems)
 // This is a more advanced endpoint, ensure proper validation and security.
-router.post('/', async (req, res) => {
-  try {
-    // Basic validation: ensure required fields are present
-    // const { description, date, type, lat, lng, address, severity, status, narrative, source, caseNumber } = req.body;
-    // if (!date) { // Add more required fields as necessary
-    //   return res.status(400).json({ message: 'Missing required fields (e.g., date).' });
-    // }
 
+const createCrimeValidationRules = [
+  body('date').optional().isISO8601().toDate().withMessage('Invalid date format.'),
+  body('type').optional().trim().escape(),
+  body('lat').optional().isFloat({ min: -90, max: 90 }).withMessage('Latitude must be between -90 and 90.'),
+  body('lng').optional().isFloat({ min: -180, max: 180 }).withMessage('Longitude must be between -180 and 180.'),
+  body('description').optional().trim().escape(),
+  body('address').optional().trim().escape(),
+  body('severity').optional().isIn(['Low', 'Medium', 'High', 'Critical']).withMessage('Invalid severity level.'),
+  body('status').optional().isIn(['Reported', 'Under Investigation', 'Resolved', 'Closed']).withMessage('Invalid status.'),
+  body('caseNumber').optional().trim().escape(),
+  body('narrative').optional().trim().escape(),
+  body('source').optional().trim().escape()
+];
+
+router.post('/', protect, authorize(['Admin', 'Investigator']), createCrimeValidationRules, async (req, res) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    return res.status(400).json({ message: 'Validation failed for new crime data.', errors: errors.array() });
+  }
+  try {
+    // Use req.body directly as it contains validated and sanitized data (where applicable by validators like toDate, toInt, escape)
     const newCrimeData = { ...req.body };
     // If lat/lng are provided, ensure location.coordinates is set for GeoJSON if that's the primary storage
     if (newCrimeData.lat != null && newCrimeData.lng != null) {
@@ -146,7 +201,16 @@ router.post('/', async (req, res) => {
 });
 
 // GET a single crime by ID
-router.get('/:id', async (req, res) => {
+
+const getCrimeByIdValidationRules = [
+  param('id').isMongoId().withMessage('Invalid crime ID format.')
+];
+
+router.get('/:id', protect, getCrimeByIdValidationRules, async (req, res) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    return res.status(400).json({ message: 'Validation failed for crime ID.', errors: errors.array() });
+  }
   try {
     const crime = await Crime.findById(req.params.id).lean();
     if (!crime) {
@@ -160,8 +224,29 @@ router.get('/:id', async (req, res) => {
 });
 
 // PUT (update) a crime by ID
-router.put('/:id', async (req, res) => {
+
+const updateCrimeValidationRules = [
+  param('id').isMongoId().withMessage('Invalid crime ID format.'),
+  body('date').optional().isISO8601().toDate().withMessage('Invalid date format.'),
+  body('type').optional().trim().escape(),
+  body('lat').optional().isFloat({ min: -90, max: 90 }).withMessage('Latitude must be between -90 and 90.'),
+  body('lng').optional().isFloat({ min: -180, max: 180 }).withMessage('Longitude must be between -180 and 180.'),
+  body('description').optional().trim().escape(),
+  body('address').optional().trim().escape(),
+  body('severity').optional().isIn(['Low', 'Medium', 'High', 'Critical']).withMessage('Invalid severity level.'),
+  body('status').optional().isIn(['Reported', 'Under Investigation', 'Resolved', 'Closed']).withMessage('Invalid status.'),
+  body('caseNumber').optional().trim().escape(),
+  body('narrative').optional().trim().escape(),
+  body('source').optional().trim().escape()
+];
+
+router.put('/:id', protect, authorize(['Admin', 'Investigator']), updateCrimeValidationRules, async (req, res) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    return res.status(400).json({ message: 'Validation failed for updating crime data.', errors: errors.array() });
+  }
   try {
+    // Use req.body for update data, req.params.id for ID
     const updateData = { ...req.body, updatedAt: Date.now() };
     if (updateData.lat != null && updateData.lng != null) {
         updateData.location = {
@@ -185,7 +270,16 @@ router.put('/:id', async (req, res) => {
 });
 
 // DELETE a crime by ID
-router.delete('/:id', async (req, res) => {
+
+const deleteCrimeValidationRules = [
+  param('id').isMongoId().withMessage('Invalid crime ID format.')
+];
+
+router.delete('/:id', protect, authorize(['Admin']), deleteCrimeValidationRules, async (req, res) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    return res.status(400).json({ message: 'Validation failed for crime ID.', errors: errors.array() });
+  }
   try {
     const deletedCrime = await Crime.findByIdAndDelete(req.params.id);
     if (!deletedCrime) {

@@ -33,10 +33,24 @@ const crimeSchema = new mongoose.Schema({
   status: { type: String, enum: ['Reported', 'Under Investigation', 'Resolved', 'Closed'], default: 'Reported' }, // Current status of the case
   narrative: { type: String }, // Detailed description or narrative of the event
   source: { type: String }, // Source of the crime report (e.g., 'Officer Report', 'Public Tip', 'Sensor')
+  dataSensitivityLevel: {
+    type: String,
+    enum: ['Public', 'Internal', 'Confidential', 'HighlyConfidential'], // Example levels
+    default: 'Internal'
+  },
+  // GRC Consideration: For highly sensitive records, fields for specific handling instructions
+  // or access notes (e.g., 'Access restricted to Unit X') might be necessary.
+  // This could be a simple text field or a more structured object.
 
   // Timestamps for record creation and updates
+  // GRC Consideration: Implement data retention policies. This might involve
+  // a separate process for archiving or deleting records based on age, status, or other criteria.
+  // Fields like 'retentionExpiresAt' or 'archiveStatus' could be added.
   createdAt: { type: Date, default: Date.now },
   updatedAt: { type: Date, default: Date.now }
+  // Data Privacy Consideration: For analytics or data sharing, fields indicating
+  // anonymization or pseudonymization status (e.g., 'anonymized', 'pseudonymized', 'original')
+  // might be required in the future.
 });
 
 // Index for geospatial queries if using GeoJSON 'location' field

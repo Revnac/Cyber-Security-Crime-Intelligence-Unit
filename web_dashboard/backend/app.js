@@ -2,10 +2,15 @@
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors'); // For handling Cross-Origin Resource Sharing
+const helmet = require('helmet'); // <<< ADD THIS
+const rateLimit = require('express-rate-limit'); // <<< ADD THIS
+const morgan = require('morgan'); // <<< ADD THIS
+const fs = require('fs'); // <<< ADD THIS - For file system operations if logging to file
 const path = require('path'); // For serving static files from React build
 
 // Import routes
 const crimeRoutes = require('./routes/crime');
+const authRoutes = require('./routes/auth'); // <<< ADD THIS
 // const predictionRoutes = require('./routes/prediction'); // Placeholder for future prediction routes
 
 // Initialize Express app
@@ -18,14 +23,53 @@ const PORT = process.env.PORT || 3001;
 // For local development, it might be 'mongodb://localhost:27017/guardian_ai_db'
 // For SAPS, this would be a secured, managed MongoDB instance.
 const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/guardian_ai_saps_db';
+// IMPORTANT: Configure JWT_SECRET in your environment variables for production.
+// It is used for signing and verifying authentication tokens in routes/auth.js.
+// Example: process.env.JWT_SECRET
+// A strong, unique secret key is crucial for security.
 
 // --- Middleware ---
+app.use(helmet()); // Apply Helmet first for security headers
+
 // Enable CORS - configure appropriately for production (e.g., whitelist specific origins)
-app.use(cors()); 
+app.use(cors());
+
+// HTTP Request Logging
+if (process.env.NODE_ENV === 'development') {
+    app.use(morgan('dev'));
+} else {
+    // Example for production: log to a file
+    // Ensure 'logs' directory exists or is created
+    // const accessLogStream = fs.createWriteStream(path.join(__dirname, 'logs', 'access.log'), { flags: 'a' });
+    // app.use(morgan('combined', { stream: accessLogStream }));
+    app.use(morgan('combined')); // Or use a logging service
+}
+    
 // Parse JSON request bodies
 app.use(express.json()); 
 // Parse URL-encoded request bodies
 app.use(express.urlencoded({ extended: true }));
+
+// --- API Rate Limiting ---
+// Apply to all requests to /api/
+const apiLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000, // 15 minutes
+    max: 100, // Limit each IP to 100 requests per `windowMs` (for all /api routes)
+    standardHeaders: true, // Return rate limit info in the `RateLimit-*` headers
+    legacyHeaders: false, // Disable the `X-RateLimit-*` headers
+    message: 'Too many requests from this IP, please try again after 15 minutes.'
+});
+app.use('/api', apiLimiter); // Apply the rate limiting middleware to all /api routes
+
+// Note: For sensitive routes like login, you might want a stricter, separate rate limiter.
+// Example for a login-specific limiter (can be applied directly in auth.js or here):
+// const loginLimiter = rateLimit({
+//  windowMs: 15 * 60 * 1000, // 15 minutes
+//  max: 5, // Limit each IP to 5 login attempts per windowMs
+//  message: 'Too many login attempts from this IP, please try again after 15 minutes.',
+//  skipSuccessfulRequests: true, // Don't count successful logins towards the limit
+// });
+// app.use('/api/auth/login', loginLimiter); // If applied here
 
 // --- Database Connection ---
 mongoose.connect(MONGODB_URI, {
@@ -41,6 +85,7 @@ mongoose.connect(MONGODB_URI, {
 });
 
 // --- API Routes ---
+app.use('/api/auth', authRoutes); // <<< ADD THIS LINE (preferably before other API routes)
 // Prefix all crime routes with /api/crime
 app.use('/api/crime', crimeRoutes);
 // app.use('/api/prediction', predictionRoutes); // Future: wire up prediction routes
