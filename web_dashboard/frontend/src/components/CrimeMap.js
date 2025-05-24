@@ -1,6 +1,7 @@
 // web_dashboard/frontend/src/components/CrimeMap.js
 import React, { useState, useEffect } from 'react';
 import { GoogleMap, LoadScript, Marker } from '@react-google-maps/api';
+// import { getGeolocation } from '../../visualization/ip_geolocator'; // Hypothetical import
 
 const CrimeMap = () => {
   const [crimes, setCrimes] = useState([]);
@@ -20,10 +21,23 @@ const CrimeMap = () => {
       })
       .then(data => {
         // Assuming data is an array of crime objects with id, lat, lng properties
-        setCrimes(data);
+        setCrimes(data.data || data); // Adapt to actual data structure
+        // COMMENT TO ADD:
+        // If crime objects in 'data' also contained an IP address (e.g., data[i].reporterIp),
+        // we could use a geolocation service to plot those too, or correlate:
+        // For example, for each crime with an IP:
+        // getGeolocation(crime.reporterIp)
+        //   .then(location => { 
+        //     if (location) { 
+        //       // Create a different type of marker for this IP's location,
+        //       // or add this location info to the existing crime marker's details.
+        //       console.log(`Geolocated IP ${crime.reporterIp} to:`, location);
+        //     }
+        //   })
+        //   .catch(error => console.error("Error geolocating IP:", error));
         // Optional: Adjust map center based on fetched crimes, e.g., to the first crime or average location
-        if (data.length > 0 && data[0].lat && data[0].lng) {
-           // setMapCenter({ lat: data[0].lat, lng: data[0].lng });
+        if ((data.data || data).length > 0 && (data.data || data)[0].lat && (data.data || data)[0].lng) {
+           // setMapCenter({ lat: (data.data || data)[0].lat, lng: (data.data || data)[0].lng });
         }
       })
       .catch(error => {
@@ -60,10 +74,13 @@ const CrimeMap = () => {
         {crimes.map(crime => (
           // Ensure each crime object has a unique 'id', 'lat', and 'lng' property.
           <Marker 
-            key={crime.id} 
+            key={crime.id || crime._id} 
             position={{ lat: parseFloat(crime.lat), lng: parseFloat(crime.lng) }} 
-            title={`Crime ID: ${crime.id}`}
-            // Advanced: Consider custom icons based on crime type, clustering for many markers
+            title={`Crime ID: ${crime.id || crime._id}\nType: ${crime.type || 'N/A'}`}
+            // COMMENT TO ADD:
+            // If this marker represented a geolocated IP address, the title could include:
+            // title={`IP: ${ipAddress}\nCity: ${location.city}, Country: ${location.country}\nISP: ${location.isp}`}
+            // An InfoWindow could also be used for more details.
           />
         ))}
         {/* Additional map features can be added here, e.g., heatmaps, drawing tools */}

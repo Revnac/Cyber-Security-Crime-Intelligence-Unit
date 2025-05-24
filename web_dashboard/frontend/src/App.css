@@ -65,3 +65,31 @@
   width: 100%;
   height: 400px; /* Or manage via props in CrimeChart.js */
 }
+
+.App-nav {
+  background-color: #333;
+  padding: 10px 0;
+  margin-bottom: 20px;
+}
+
+.App-nav ul {
+  list-style-type: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  justify-content: center;
+}
+
+.App-nav ul li {
+  margin: 0 15px;
+}
+
+.App-nav ul li a {
+  color: white;
+  text-decoration: none;
+  font-weight: bold;
+}
+
+.App-nav ul li a:hover {
+  text-decoration: underline;
+}

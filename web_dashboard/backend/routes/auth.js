@@ -5,6 +5,7 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const User = require('../models/user'); // Assuming your User model is here
 const { body, validationResult } = require('express-validator');
+const { auditLog } = require('../utils/logger'); // Adjust path if necessary
 
 // --- Configuration ---
 // Use environment variables for JWT secret and expiration in a real application
@@ -70,6 +71,7 @@ router.post('/register', registerValidationRules, async (req, res) => {
       createdAt: savedUser.createdAt
     };
 
+    auditLog('INFO', 'USER_REGISTERED_SUCCESS', savedUser._id, { username: savedUser.username, email: savedUser.email, registrationIp: req.ip });
     res.status(201).json({ message: 'User registered successfully.', user: userResponse });
 
   } catch (error) {
@@ -107,16 +109,19 @@ router.post('/login', loginValidationRules, async (req, res) => {
     }).select('+password');
 
     if (!user) {
+      auditLog('WARN', 'USER_LOGIN_FAILURE_NOT_FOUND', null, { usernameOrEmailAttempt: usernameOrEmail, loginIp: req.ip });
       return res.status(401).json({ message: 'Invalid credentials. User not found.' });
     }
 
     // Compare submitted password with stored hashed password
     const isMatch = await user.comparePassword(password);
     if (!isMatch) {
+      auditLog('WARN', 'USER_LOGIN_FAILURE_PASSWORD_INCORRECT', user ? user._id : null, { username: user ? user.username : usernameOrEmail, loginIp: req.ip });
       return res.status(401).json({ message: 'Invalid credentials. Password incorrect.' });
     }
 
     if (!user.isActive) {
+        auditLog('WARN', 'USER_LOGIN_FAILURE_INACTIVE_ACCOUNT', user._id, { username: user.username, loginIp: req.ip });
         return res.status(403).json({ message: 'Account is inactive. Please contact administrator.' });
     }
 
@@ -133,6 +138,7 @@ router.post('/login', loginValidationRules, async (req, res) => {
     user.lastLogin = Date.now();
     await user.save(); // This will trigger the pre-save hook for updatedAt if not new
 
+    auditLog('INFO', 'USER_LOGIN_SUCCESS', user._id, { username: user.username, loginIp: req.ip });
     res.json({
       message: 'Login successful.',
       token: token,

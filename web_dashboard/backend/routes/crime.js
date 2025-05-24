@@ -4,6 +4,7 @@ const router = express.Router();
 const Crime = require('../models/crime'); // Assuming your Mongoose model is here
 const { protect, authorize } = require('../middleware/authMiddleware');
 const { body, param, query, validationResult } = require('express-validator');
+const { auditLog } = require('../utils/logger'); // Adjust path if necessary
 
 // --- API Endpoints for Crime Data --- //
 
@@ -190,6 +191,9 @@ router.post('/', protect, authorize(['Admin', 'Investigator']), createCrimeValid
 
     const crime = new Crime(newCrimeData);
     const savedCrime = await crime.save();
+    // Assuming req.user is populated by the 'protect' middleware
+    const userId = req.user ? req.user._id : 'System'; // Or handle anonymous if applicable
+    auditLog('INFO', 'CRIME_DATA_CREATED', userId, { crimeId: savedCrime._id, caseNumber: savedCrime.caseNumber, clientIp: req.ip });
     res.status(201).json(savedCrime);
   } catch (err) {
     console.error('Error saving new crime data:', err);
@@ -259,6 +263,9 @@ router.put('/:id', protect, authorize(['Admin', 'Investigator']), updateCrimeVal
     if (!updatedCrime) {
       return res.status(404).json({ message: 'Crime not found for update' });
     }
+    // Ensure update was successful before logging
+    const userId = req.user ? req.user._id : 'System';
+    auditLog('INFO', 'CRIME_DATA_UPDATED', userId, { crimeId: updatedCrime._id, caseNumber: updatedCrime.caseNumber, clientIp: req.ip });
     res.json(updatedCrime);
   } catch (err) {
     console.error(`Error updating crime with id ${req.params.id}:`, err);
@@ -285,6 +292,9 @@ router.delete('/:id', protect, authorize(['Admin']), deleteCrimeValidationRules,
     if (!deletedCrime) {
       return res.status(404).json({ message: 'Crime not found for deletion' });
     }
+    // Ensure deletion was successful
+    const userId = req.user ? req.user._id : 'System';
+    auditLog('INFO', 'CRIME_DATA_DELETED', userId, { crimeId: deletedCrime._id, caseNumber: deletedCrime.caseNumber, clientIp: req.ip });
     res.json({ message: 'Crime deleted successfully' });
   } catch (err) {
     console.error(`Error deleting crime with id ${req.params.id}:`, err);

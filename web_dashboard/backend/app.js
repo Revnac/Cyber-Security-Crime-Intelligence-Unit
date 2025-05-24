@@ -11,6 +11,9 @@ const path = require('path'); // For serving static files from React build
 // Import routes
 const crimeRoutes = require('./routes/crime');
 const authRoutes = require('./routes/auth'); // <<< ADD THIS
+const ingestionRoutes = require('./routes/ingestion'); // <<< ADD THIS
+const cryptoRoutes = require('./routes/cryptoRoutes'); // <<< ADD THIS
+const amlRoutes = require('./routes/amlRoutes'); // <<< ADD THIS
 // const predictionRoutes = require('./routes/prediction'); // Placeholder for future prediction routes
 
 // Initialize Express app
@@ -88,6 +91,9 @@ mongoose.connect(MONGODB_URI, {
 app.use('/api/auth', authRoutes); // <<< ADD THIS LINE (preferably before other API routes)
 // Prefix all crime routes with /api/crime
 app.use('/api/crime', crimeRoutes);
+app.use('/api/ingest', ingestionRoutes); // <<< ADD THIS
+app.use('/api/crypto', cryptoRoutes); // <<< ADD THIS
+app.use('/api/aml', amlRoutes); // <<< ADD THIS
 // app.use('/api/prediction', predictionRoutes); // Future: wire up prediction routes
 
 // --- Serve React Frontend (Production) ---

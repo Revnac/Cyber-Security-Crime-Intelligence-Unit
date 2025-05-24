@@ -74,9 +74,10 @@ Detailed setup instructions for each component are provided below. Ensure all AP
     -   **Dependency**: THREE.js. Include this library in your HTML file.
     -   **HTML Requirement**: A `<canvas id='canvas'></canvas>` element.
 -   **`ip_geolocator.js`**:
-    -   **Dependency**: Google Maps API. Include the API script in your HTML file.
-    -   **HTML Requirement**: A `<div id='map'></div>` element.
-    -   **Configuration**: Replace `'YOUR_API_KEY_HERE'` with your Google Maps API key and your IP Geolocation API key.
+    -   **Dependency**: Google Maps API (for `plotLocations` function, if used for plotting). The `getGeolocation` function itself does not directly use Google Maps.
+    -   **HTML Requirement (for `plotLocations`)**: A `<div id='map'></div>` element.
+    -   **Configuration for `getGeolocation`**: For live IP geolocation, an API key from a service like `ipgeolocation.io` is required. This key must be provided as an environment variable named `REACT_APP_IPGEOLOCATION_API_KEY` when building or running the React application (if `ip_geolocator.js` is used within a React component that calls it). If the key is not provided, the function will not fetch live data.
+    -   **Note**: The `plotLocations` function in this script also requires the Google Maps API to be loaded for map rendering. Ensure your Google Maps API key is also correctly configured (typically in `CrimeMap.js` or similar via `REACT_APP_GOOGLE_MAPS_API_KEY`).
 -   **Usage**: Include these scripts in an HTML file that provides the required canvas/div elements and library dependencies.
 
 ### 5. Web Dashboard (`web_dashboard/`)
@@ -125,6 +126,95 @@ Detailed setup instructions for each component are provided below. Ensure all AP
     -   The `TARGET_COLUMN` constant in the script should match the name of your target variable in the CSV.
 -   **Running**: `python prediction_service/crime_prediction.py`
 -   **Output**: Trains a model and saves it as `crime_prediction_model.joblib` in the `prediction_service/` directory. Also prints evaluation metrics.
+
+## LLM & NLP Security Considerations (Phase 3 - Step 10 Outline)
+
+This section outlines potential use cases for Large Language Models (LLMs) and Natural Language Processing (NLP) within the Guardian AI platform for SAPS, along with critical security and ethical considerations. The actual implementation will depend on specific, approved use cases and adherence to legal and ethical guidelines.
+
+### Potential Use Cases for SAPS Intelligence
+
+*   **Analysis of Unstructured Data:**
+    *   Extracting entities (names, locations, organizations), relationships, and key events from investigation narratives, witness statements, or officer reports.
+    *   Identifying potential PII (Personally Identifiable Information) within large text datasets for review or redaction.
+    *   Sentiment analysis on reports or public domain text related to specific events or areas.
+*   **Information Retrieval & Summarization:**
+    *   Summarizing large volumes of text (e.g., lengthy reports, collections of documents) to quickly identify key information.
+    *   Developing a secure, internal Q&A system or chatbot to query knowledge bases (e.g., legal codes, standard operating procedures, past case summaries) – *this requires extremely robust data security and access controls*.
+*   **Report Generation Assistance:**
+    *   Aiding in drafting standardized sections of reports based on structured data or summaries.
+    *   Checking reports for consistency or missing information (e.g., ensuring all required fields in a template are addressed).
+*   **Threat Intelligence Enrichment:**
+    *   Processing and summarizing threat intelligence feeds or cybersecurity reports.
+
+### Associated Security & Ethical Concerns
+
+Implementing LLM/NLP capabilities requires careful attention to the following:
+
+*   **Prompt Injection:** Protecting against malicious inputs designed to make an LLM bypass its instructions, reveal sensitive information, or perform unintended actions. This involves input sanitization and potentially output validation.
+*   **Data Poisoning:** If custom LLMs are trained, ensuring the integrity and security of the training data is paramount to prevent the introduction of vulnerabilities, biases, or backdoors. (Less relevant if using pre-trained models via APIs, but API provider's security is then a factor).
+*   **Model Evasion & Adversarial Attacks:** Inputs crafted to bypass safety filters, generate harmful content, or extract confidential information the LLM was exposed to.
+*   **PII & Sensitive Data Leakage:** LLMs might inadvertently reveal Personally Identifiable Information or other sensitive data present in their training set or in the prompts they process. Robust PII detection and redaction mechanisms are crucial both for input and output.
+*   **API Security for LLM Endpoints:** Any internal or external APIs exposing LLM functionalities must be secured with strong authentication, authorization, input validation, and rate limiting, adhering to OWASP API Security Top 10.
+*   **Ethical Use, Bias, and Accuracy:**
+    *   Ensuring LLM outputs are fair, unbiased, and factually accurate, especially when used in law enforcement contexts.
+    *   Regularly auditing for biases related to race, gender, location, etc.
+    *   Clearly indicating when content is AI-generated.
+    *   Human oversight is critical for any decisions based on LLM outputs.
+*   **Data Residency and Sovereignty:** Ensuring that any data processed by external LLM APIs complies with South African data protection laws (like POPIA) regarding data location and cross-border transfer.
+*   **Compliance with Regulations:** Adherence to POPIA, RICA (for communication-related data if applicable), and internal SAPS data handling policies.
+
+### Placeholder Services
+
+*   Backend services like `llm_security/inputAnalyzerService.js` will be developed to include functions for:
+    *   `sanitizePrompt(promptString)`: For cleaning user inputs to LLMs.
+    *   `analyzeForPII(textString)`: For detecting PII in text.
+    *   `filterLLMOutput(outputString)`: For checking and redacting LLM outputs.
+
+### Relevant Libraries & Tools (Examples for Research)
+
+The actual implementation of LLM/NLP security features would benefit from leveraging specialized libraries and tools. The choice would depend on the specific LLM provider (if any), language (Python/Node.js), and depth of security required.
+
+**For Python (if backend microservices or Python scripts are used for NLP):**
+
+*   **PII Detection & Sanitization:**
+    *   `Presidio (Microsoft)`: Comprehensive PII detection and anonymization.
+    *   `spaCy`: Can be trained for Named Entity Recognition (NER) to identify PII.
+    *   `scrubadub`: For removing PII from text.
+*   **Prompt Engineering & Security:**
+    *   `LangChain`: Framework for developing applications powered by language models; includes utilities for prompt management and chaining.
+    *   `Guardrails AI (NVIDIA NeMo Guardrails)`: Programmable guardrails for LLM conversations.
+*   **LLM Interaction SDKs:**
+    *   `openai`: Official Python client for OpenAI APIs (GPT-3, GPT-4, etc.).
+    *   `huggingface_hub` / `transformers`: For accessing and using models from the Hugging Face Hub.
+*   **Text Processing & NLP:**
+    *   `NLTK`, `spaCy`: General NLP tasks like tokenization, POS tagging, NER that can support security analysis.
+
+**For Node.js (if implementing directly in the current backend):**
+
+*   **PII Detection & Sanitization:**
+    *   While Node.js has fewer mature, dedicated PII libraries compared to Python, options include:
+        *   Regex-based approaches: Custom regular expressions for common patterns (emails, phones, ID numbers - requires careful crafting for SA context).
+        *   `@microsoft/presidio-client` (if Presidio is deployed as a service).
+        *   Third-party APIs specializing in PII detection.
+        *   (Research needed for up-to-date Node.js PII libraries).
+*   **Prompt Engineering & Security:**
+    *   `LangChain.js` (JavaScript/TypeScript version of LangChain): Growing capabilities for LLM application development.
+    *   Custom input validation and sanitization logic.
+*   **LLM Interaction SDKs:**
+    *   `openai` (Node.js client).
+    *   Libraries for other LLM providers (e.g., Google Gemini, Anthropic Claude).
+*   **Text Processing & NLP:**
+    *   `natural`: General NLP functionalities for Node.js.
+    *   `compromise`: NLP library for parsing and understanding text.
+
+**General Security Tools (Potentially applicable):**
+
+*   **Web Application Firewalls (WAFs):** Can help protect LLM API endpoints from common web attacks.
+*   **API Security Gateways:** For managing and securing API access to LLMs.
+
+This list is not exhaustive and serves as a starting point for research when specific LLM/NLP use cases are implemented.
+
+Further development in this area will require specific approved use cases and a thorough risk assessment for each.
 
 ## Placeholder API Keys and Configuration
 

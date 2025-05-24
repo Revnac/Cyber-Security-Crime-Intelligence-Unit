@@ -1,5 +1,6 @@
 # prediction_service/crime_prediction.py
 import pandas as pd
+import numpy as np # <<< ADDED
 from sklearn.model_selection import train_test_split, GridSearchCV
 from sklearn.ensemble import RandomForestClassifier # Example model, can be replaced/enhanced
 from sklearn.metrics import classification_report, confusion_matrix, accuracy_score
@@ -17,54 +18,108 @@ TARGET_COLUMN = 'target_crime_category' # Example: Name of the column to predict
 # --- Data Loading and Preprocessing ---
 def load_and_preprocess_data(file_path):
     """Loads and preprocesses the crime data from a CSV file."""
-    print(f"Loading data from {file_path}...")
+    print(f"Attempting to load data from {file_path}...")
     if not os.path.exists(file_path):
-        print(f"Error: Data file not found at {file_path}.")
+        print(f"CRITICAL ERROR: Data file not found at {file_path}.")
         print("Please ensure 'crime_data.csv' exists in the 'prediction_service' directory.")
-        print("The CSV should contain features (e.g., location, time, day_of_week, socio_economic_indicators) ")
+        print("The CSV should contain features (e.g., a 'timestamp' column for time features, ")
+        print("'latitude'/'longitude' for geospatial features, other relevant socio-economic indicators, etc.) ")
         print(f"and a target column named '{TARGET_COLUMN}' for prediction.")
-        return None, None
+        return None, None, None # Adjusted return for consistent signature
 
     try:
         df = pd.read_csv(file_path)
+        print(f"Data loaded successfully. Initial shape: {df.shape}")
+        print(f"Initial columns: {df.columns.tolist()}")
+    except pd.errors.EmptyDataError:
+        print(f"CRITICAL ERROR: The data file {file_path} is empty.")
+        return None, None, None
+    except pd.errors.ParserError as e:
+        print(f"CRITICAL ERROR: Error parsing CSV file {file_path}. Details: {e}")
+        return None, None, None
     except Exception as e:
-        print(f"Error loading CSV file: {e}")
-        return None, None
-
-    print(f"Data loaded successfully. Shape: {df.shape}")
-    print(f"Columns: {df.columns.tolist()}")
+        print(f"CRITICAL ERROR: An unexpected error occurred while loading CSV file {file_path}. Details: {e}")
+        return None, None, None
 
     if TARGET_COLUMN not in df.columns:
-        print(f"Error: Target column '{TARGET_COLUMN}' not found in the data.")
+        print(f"CRITICAL ERROR: Target column '{TARGET_COLUMN}' not found in the data.")
         print(f"Available columns: {df.columns.tolist()}")
-        return None, None
+        return None, None, None
 
-    # --- Advanced Feature Engineering Placeholder ---
-    # Examples: 
-    # - Convert date/time columns into cyclical features (hour_sin, hour_cos, month_sin, month_cos)
-    # - Create interaction terms (e.g., location_type * time_of_day)
-    # - Bin numerical features (e.g., age groups, income brackets if available)
-    # - Use external data sources (e.g., weather, public holidays, economic indicators) if available
-    # df['hour'] = pd.to_datetime(df['timestamp_column']).dt.hour # Example
+    # --- Feature Engineering ---
+    print("Starting feature engineering...")
 
-    print("Performing basic preprocessing...")
-    # Example: Drop rows with missing target
+    # Time-Based Features
+    # Example: Assuming a 'timestamp' column exists and is in a parsable date/time format
+    if 'timestamp' in df.columns:
+        try:
+            df['timestamp'] = pd.to_datetime(df['timestamp'])
+            df['hour'] = df['timestamp'].dt.hour
+            df['day_of_week'] = df['timestamp'].dt.dayofweek # Monday=0, Sunday=6
+            df['month'] = df['timestamp'].dt.month
+            df['year'] = df['timestamp'].dt.year
+            print("Generated time-based features: hour, day_of_week, month, year.")
+            # Example for cyclical features (advanced)
+            # df['hour_sin'] = np.sin(2 * np.pi * df['hour'] / 24)
+            # df['hour_cos'] = np.cos(2 * np.pi * df['hour'] / 24)
+            # df['month_sin'] = np.sin(2 * np.pi * df['month'] / 12)
+            # df['month_cos'] = np.cos(2 * np.pi * df['month'] / 12)
+            # Consider dropping original 'timestamp' if it's fully processed and not needed directly
+            # df.drop('timestamp', axis=1, inplace=True, errors='ignore') 
+        except Exception as e:
+            print(f"Warning: Error processing 'timestamp' column for time-based features: {e}. Skipping time features.")
+    else:
+        print("Warning: 'timestamp' column not found. Time-based features cannot be generated.")
+
+    # --- Geospatial Feature Engineering (Conceptual Placeholder) ---
+    # If 'latitude' and 'longitude' columns exist:
+    # - Could be used directly as numerical features.
+    # - Advanced: Create features like 'distance_to_city_center', 'distance_to_known_hotspots',
+    #   or categorize into predefined zones/beats if a map is available.
+    # - This often requires geospatial libraries (e.g., GeoPandas, Shapely) and additional datasets.
+    # Example: df['zone'] = categorize_location_to_zone(df['latitude'], df['longitude'])
+    if 'latitude' not in df.columns or 'longitude' not in df.columns:
+        print("Warning: 'latitude' or 'longitude' columns not found. Geospatial features may be limited.")
+
+
+    # --- Interaction Term Engineering (Conceptual Placeholder) ---
+    # Consider creating interaction terms if domain knowledge suggests they are relevant.
+    # Example: if 'time_period' (e.g., 'night', 'day') and 'area_type' (e.g., 'residential', 'commercial') exist:
+    # if 'hour' in df.columns and 'some_categorical_location_feature' in df.columns:
+    #   df['time_period'] = pd.cut(df['hour'], bins=[0, 6, 12, 18, 24], labels=['night', 'morning', 'afternoon', 'evening'], right=False)
+    #   df['hour_area_interaction'] = df['time_period'].astype(str) + '_' + df['some_categorical_location_feature'].astype(str)
+    #   print("Generated example interaction term: 'hour_area_interaction'.")
+
+
+    print("Performing basic preprocessing (dropping rows with missing target)...")
     df.dropna(subset=[TARGET_COLUMN], inplace=True)
+    print(f"Shape after dropping NA in target: {df.shape}")
+
+    if df.empty:
+        print("CRITICAL ERROR: DataFrame is empty after dropping rows with missing target values. Cannot proceed.")
+        return None, None, None
 
     # Define features (X) and target (y)
     X = df.drop(TARGET_COLUMN, axis=1)
     y = df[TARGET_COLUMN]
 
-    # Identify categorical and numerical features for preprocessing
-    # This is a simplified example; more sophisticated feature type detection might be needed.
+    # Drop other non-feature columns (example: if an ID column exists that's not useful for training)
+    # X = X.drop(['incident_id'], axis=1, errors='ignore') 
+
+    # Identify categorical and numerical features for preprocessing *after* feature engineering
     categorical_features = X.select_dtypes(include=['object', 'category']).columns.tolist()
-    numerical_features = X.select_dtypes(include=['int64', 'float64']).columns.tolist()
+    numerical_features = X.select_dtypes(include=['int64', 'float64', 'int32', 'float32']).columns.tolist() # Added more numeric types
 
-    # Drop columns that are not features (e.g., IDs, raw date/time if transformed)
-    # Example: X = X.drop(['incident_id', 'exact_timestamp'], axis=1, errors='ignore')
+    # Ensure that any new features created (like 'hour', 'day_of_week') are correctly categorized
+    # For example, if 'hour' was created and is numeric but should be treated as categorical by one-hot encoding:
+    # if 'hour' in numerical_features:
+    #     numerical_features.remove('hour')
+    #     categorical_features.append('hour')
 
-    print(f"Identified numerical features: {numerical_features}")
-    print(f"Identified categorical features: {categorical_features}")
+    print(f"Identified numerical features for scaling: {numerical_features}")
+    print(f"Identified categorical features for one-hot encoding: {categorical_features}")
+    print(f"Final features for preprocessing: {X.columns.tolist()}")
+
 
     # Create preprocessing pipelines for numerical and categorical features
     numerical_transformer = StandardScaler() # Scale numerical features
@@ -89,34 +144,52 @@ def train_and_evaluate_model(X, y, preprocessor):
     print("Splitting data into training and testing sets...")
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.25, random_state=42, stratify=y if y.nunique() > 1 else None)
 
-    # --- Advanced Model Selection Placeholder ---
-    # - Consider other models: Gradient Boosting (XGBoost, LightGBM), SVM, Neural Networks.
-    # - Implement hyperparameter tuning (e.g., GridSearchCV, RandomizedSearchCV).
-    # - Use cross-validation for more robust evaluation.
+    # --- Advanced Model Selection ---
+    # Current model: RandomForestClassifier.
+    # For potentially better performance, consider exploring other models:
+    # - Gradient Boosting Machines (e.g., XGBoost, LightGBM). These often provide high accuracy.
+    #   (Requires installation: pip install xgboost lightgbm)
+    # - Support Vector Machines (SVMs) for complex decision boundaries.
+    # - Neural Networks (e.g., using Keras/TensorFlow or PyTorch) for very large datasets and complex patterns.
+    # Example for XGBoost (would replace RandomForestClassifier in pipeline):
+    # from xgboost import XGBClassifier
+    # ('classifier', XGBClassifier(random_state=42, use_label_encoder=False, eval_metric='mlogloss'))
 
     # Create a pipeline with preprocessing and the classifier
     # Using RandomForestClassifier as an example. For advanced use, explore other algorithms.
     model_pipeline = Pipeline(steps=[
         ('preprocessor', preprocessor),
-        ('classifier', RandomForestClassifier(n_estimators=100, random_state=42, class_weight='balanced'))
+        ('classifier', RandomForestClassifier(n_estimators=100, random_state=42, class_weight='balanced')) # Default, can be tuned
     ])
 
-    # Example of Hyperparameter Tuning (can be computationally intensive)
-    # param_grid = {
-    #     'classifier__n_estimators': [100, 200],
-    #     'classifier__max_depth': [None, 10, 20],
-    #     'classifier__min_samples_split': [2, 5]
-    # }
-    # grid_search = GridSearchCV(model_pipeline, param_grid, cv=3, n_jobs=-1, scoring='accuracy') # or 'f1_weighted'
-    # print("Starting hyperparameter tuning with GridSearchCV...")
-    # grid_search.fit(X_train, y_train)
-    # print(f"Best parameters found: {grid_search.best_params_}")
-    # best_model = grid_search.best_estimator_
+    # --- Hyperparameter Tuning with GridSearchCV (Example) ---
+    # To use GridSearchCV, uncomment the following section and adjust `param_grid`.
+    # This can be computationally intensive.
+    use_grid_search = False # Set to True to enable GridSearchCV
 
-    print("Training the model...")
-    # Remove grid_search and use model_pipeline directly if not tuning, or use best_model from grid_search
-    model_pipeline.fit(X_train, y_train)
-    best_model = model_pipeline # If not using GridSearchCV
+    if use_grid_search:
+        param_grid = {
+            'classifier__n_estimators': [100, 200, 300],
+            'classifier__max_depth': [None, 10, 20, 30],
+            'classifier__min_samples_split': [2, 5, 10],
+            'classifier__min_samples_leaf': [1, 2, 4],
+            'classifier__class_weight': ['balanced', 'balanced_subsample', None] # if using RandomForest
+        }
+        # For XGBoost, param_grid would be different, e.g.:
+        # 'classifier__learning_rate': [0.01, 0.1, 0.2],
+        # 'classifier__n_estimators': [100, 200, 500],
+        # 'classifier__max_depth': [3, 5, 7]
+        
+        grid_search = GridSearchCV(model_pipeline, param_grid, cv=3, n_jobs=-1, scoring='f1_weighted', verbose=2)
+        print("Starting hyperparameter tuning with GridSearchCV...")
+        grid_search.fit(X_train, y_train)
+        print(f"Best parameters found: {grid_search.best_params_}")
+        print(f"Best cross-validation score ({grid_search.scoring}): {grid_search.best_score_:.4f}")
+        best_model = grid_search.best_estimator_
+    else:
+        print("Training the model with default/specified parameters (GridSearchCV disabled)...")
+        model_pipeline.fit(X_train, y_train)
+        best_model = model_pipeline
 
     print("Evaluating the model...")
     y_pred = best_model.predict(X_test)
@@ -130,11 +203,30 @@ def train_and_evaluate_model(X, y, preprocessor):
     print(classification_report(y_test, y_pred, zero_division=0))
     print("-------------------------")
 
-    # --- Advanced Evaluation Placeholder ---
-    # - ROC AUC scores, Precision-Recall curves.
-    # - Feature importance analysis (e.g., from RandomForest or SHAP values).
-    # - Bias and fairness audits if sensitive attributes are present.
-    # - Consider domain-specific metrics relevant to SAPS operations.
+    # --- Advanced Evaluation Metrics & Techniques (Considerations) ---
+    # - ROC Curve & AUC Score: Useful for evaluating binary or multi-class classifier performance.
+    #   from sklearn.metrics import roc_auc_score, roc_curve
+    #   # For multi-class, use roc_auc_score(y_test, y_pred_proba, multi_class='ovr' or 'ovo')
+    # - Precision-Recall Curve: Especially useful for imbalanced datasets.
+    #   from sklearn.metrics import precision_recall_curve
+    # - Feature Importance: Understand which features are driving predictions.
+    #   if hasattr(best_model.named_steps['classifier'], 'feature_importances_'):
+    #       # Get feature names after one-hot encoding from preprocessor
+    #       # This requires careful handling of feature names from ColumnTransformer
+    #       # feature_names = best_model.named_steps['preprocessor'].get_feature_names_out()
+    #       # importances = best_model.named_steps['classifier'].feature_importances_
+    #       # feature_importance_df = pd.DataFrame({'feature': feature_names, 'importance': importances})
+    #       # print("\nFeature Importances:\n", feature_importance_df.sort_values(by='importance', ascending=False))
+    #       print("\nFeature importances could be extracted here (implementation needed for correct feature names).")
+    #   # Alternatively, use model-agnostic methods like SHAP (pip install shap).
+    # - Cross-Validation Scores: If not using GridSearchCV for final model, get CV scores for robustness.
+    #   from sklearn.model_selection import cross_val_score
+    #   # cv_scores = cross_val_score(model_pipeline, X_train, y_train, cv=5, scoring='f1_weighted')
+    #   # print(f"\nCross-validation F1 scores: {cv_scores}")
+    #   # print(f"Mean CV F1 score: {cv_scores.mean():.4f}")
+    # - Bias & Fairness Audits: If data includes sensitive attributes (e.g., demographics),
+    #   evaluate model fairness across different groups (requires specialized libraries like Fairlearn).
+    # - Domain-Specific Metrics: Consider metrics most relevant to SAPS operational goals.
 
     return best_model
 
@@ -177,31 +269,52 @@ def main():
 
     # 2. Train and evaluate model (or load existing model)
     trained_model = None
-    if os.path.exists(MODEL_SAVE_PATH):
-        # choice = input(f"A trained model exists at {MODEL_SAVE_PATH}. Load it? (y/n) or Retrain? (r): ").lower()
-        # if choice == 'y':
-        #     trained_model = load_model(MODEL_SAVE_PATH)
-        # elif choice != 'r': # Default to retraining if not 'y'
-        #     print("Invalid choice or no choice to load, proceeding to retrain.")
-        print(f"Note: A trained model exists at {MODEL_SAVE_PATH}. This script will retrain by default.")
-        print("Modify script or implement loading logic if you wish to use the saved model without retraining.")
-
-    # Always retrain for this example, or implement more sophisticated logic for loading/retraining
-    # if trained_model is None: 
-    print("Proceeding to train a new model...")
-    trained_model = train_and_evaluate_model(X, y, preprocessor)
-
-    # 3. Save the trained model
+    # Allow retraining via a flag or input
+    force_retrain = False # Could be set by command-line arg, e.g., --retrain
+    # choice_retrain = input("Force model retraining even if a saved model exists? (y/n, default n): ").lower()
+    # if choice_retrain == 'y':
+    #     force_retrain = True
+        
+    if not force_retrain and os.path.exists(MODEL_SAVE_PATH):
+        print(f"Found existing model at {MODEL_SAVE_PATH}.")
+        choice_load = input("Load this existing model? (y/n, default y): ").lower()
+        if choice_load != 'n': # Default to loading if 'n' is not chosen
+            trained_model = load_model(MODEL_SAVE_PATH)
+        else:
+            print("Proceeding to train a new model as per user choice.")
+    
+    if trained_model is None:
+        print("Training a new model...")
+        trained_model = train_and_evaluate_model(X, y, preprocessor)
+        if trained_model:
+            save_model(trained_model, MODEL_SAVE_PATH)
+    
     if trained_model:
-        save_model(trained_model, MODEL_SAVE_PATH)
+        print("\n--- Making Predictions (Example on Test Data) ---")
+        # For a real scenario, you'd load new, unseen data here.
+        # This example uses a subset of the original X_test for demonstration.
+        # Ensure this X_test_sample is preprocessed just like training data if it's raw.
+        # However, trained_model is a pipeline, so it expects raw X_test_sample.
+        
+        # To get X_test again for demonstration (usually you'd have new data)
+        X_train_temp, X_test_sample, y_train_temp, y_test_sample = train_test_split(X, y, test_size=0.1, random_state=42, stratify=y if y.nunique() > 1 else None)
+        
+        if not X_test_sample.empty:
+            print(f"Predicting on {len(X_test_sample)} new samples (using a test sample for demo)...")
+            # The 'trained_model' is a full pipeline, so it handles preprocessing.
+            new_predictions = trained_model.predict(X_test_sample)
+            new_pred_proba = trained_model.predict_proba(X_test_sample)
 
-        # --- Placeholder for making predictions on new data ---
-        # new_data = pd.DataFrame(...) # Load or create new data for prediction
-        # Ensure new_data has the same columns as X_train (before preprocessing)
-        # predictions = trained_model.predict(new_data)
-        # print(f"Predictions on new data: {predictions}")
+            # Display first few predictions as an example
+            for i in range(min(len(new_predictions), 5)):
+                print(f"  Sample {i+1}: Predicted='{new_predictions[i]}', Probabilities={[f'{p:.2f}' for p in new_pred_proba[i]]}")
+            
+            # You would then use these predictions for operational purposes.
+            # Example: Store predictions, trigger alerts, display on a dashboard.
+        else:
+            print("No sample data to make predictions on in this example run.")
     else:
-        print("Model training failed or was skipped. No model to save or use.")
+        print("No trained model available to make predictions.")
 
     print("--- Prediction Service Run Complete ---")
 
