@@ -1,0 +1,24 @@
+{
+  "name": "guardian-ai-backend",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Backend service for the Guardian AI SAPS Crime Intelligence Dashboard.",
+  "main": "app.js",
+  "scripts": {
+    "start": "node app.js",
+    "dev": "nodemon app.js", 
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.3.1", 
+    "express": "^4.18.2",
+    "mongoose": "^8.0.3" 
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.2" 
+  },
+  "engines": {
+    "node": ">=18.x" 
+  }
+}

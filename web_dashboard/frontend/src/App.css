@@ -1,0 +1,67 @@
+/* web_dashboard/frontend/src/App.css */
+.App {
+  text-align: center;
+  font-family: Arial, sans-serif;
+  color: #333;
+}
+
+.App-header {
+  background-color: #282c34; /* Dark background for header */
+  padding: 20px;
+  color: white;
+  margin-bottom: 20px;
+}
+
+.App-header h1 {
+  margin: 0;
+  font-size: 2em;
+}
+
+.App-main {
+  padding: 0 20px;
+}
+
+.App-section {
+  margin-bottom: 40px;
+  padding: 20px;
+  border: 1px solid #ddd;
+  border-radius: 8px;
+  background-color: #f9f9f9;
+}
+
+.App-section h2 {
+  font-size: 1.5em;
+  margin-top: 0;
+  color: #282c34;
+  border-bottom: 2px solid #eee;
+  padding-bottom: 10px;
+  margin-bottom: 20px;
+}
+
+.section-divider {
+  margin: 40px 0;
+  border: 0;
+  border-top: 1px solid #ccc;
+}
+
+.App-footer {
+  margin-top: 40px;
+  padding: 20px;
+  background-color: #f0f0f0;
+  border-top: 1px solid #ddd;
+  font-size: 0.9em;
+  color: #555;
+}
+
+/* Styles for map and chart containers if needed, though they are often self-contained or sized by parent */
+.map-section .google-map-container {
+  /* Example if you wrap CrimeMap in a div with this class */
+  width: 100%;
+  height: 500px; /* Or manage via mapContainerStyle in CrimeMap.js */
+}
+
+.chart-section .recharts-responsive-container {
+  /* Example if you wrap CrimeChart */
+  width: 100%;
+  height: 400px; /* Or manage via props in CrimeChart.js */
+}
