@@ -17,6 +17,76 @@ meraki_api_url = f"https://api.meraki.com/api/v1/organizations/{meraki_org_id}/a
 saps_intel_api_url = "YOUR_SAPS_INTEL_API_URL_HERE" # e.g., "https://sapsintel.example.gov.za/api/events"
 saps_intel_api_key = "YOUR_SAPS_INTEL_API_KEY_HERE"
 
+# --- MITRE ATT&CK Mapping Logic ---
+def map_meraki_event_to_mitre(meraki_event):
+    """
+    Maps a Meraki security event to potential MITRE ATT&CK tactics and techniques.
+
+    Purpose:
+    This function attempts to enrich raw Meraki security events with context from 
+    the MITRE ATT&CK framework. This helps in understanding the potential phase 
+    of an attack and the adversary's behavior.
+
+    Current Mappings & Limitations:
+    - The mappings implemented are ILLUSTRATIVE EXAMPLES ONLY and are based on
+      generic event descriptions or common signatures.
+    - These mappings NEED TO BE SIGNIFICANTLY EXPANDED AND VALIDATED against:
+        a) Actual Cisco Meraki security event schemas and detailed field values.
+        b) Known malicious activity patterns and how they manifest in Meraki logs.
+        c) Specific security policies and areas of concern for the operating environment.
+    - The logic primarily uses 'type', 'eventDetails'/'message', and 'signature'/'ruleId' 
+      fields from the Meraki event. Actual field names may vary.
+
+    Returned Object Structure:
+    If a mapping is found, returns a dictionary:
+    {
+        "mitre_tactics": [{"id": "TAXXXX", "name": "Tactic Name", "link": "URL"}],
+        "mitre_techniques": [{"id": "TXXXX.XXX", "name": "Technique Name", "link": "URL"}]
+    }
+    Returns None if no mapping is determined.
+
+    Future Enhancements:
+    - A more robust solution might involve using an external mapping file (JSON, CSV, YAML)
+      or a small database for managing mappings, rather than hardcoding them.
+    - More complex logic could consider combinations of event fields.
+    - Confidence scores for mappings could be introduced.
+    """
+    mapping = None
+    event_type = meraki_event.get('type')
+    description = meraki_event.get('eventDetails') or meraki_event.get('message') or ''
+    signature = meraki_event.get('signature') or meraki_event.get('ruleId') or '' 
+
+    event_type_lower = str(event_type).lower()
+    description_lower = str(description).lower()
+    signature_lower = str(signature).lower()
+
+    if 'ids alert' in event_type_lower or 'intrusion detected' in description_lower:
+        if 'sql injection' in signature_lower or 'sql injection attempt' in description_lower:
+            mapping = {
+                "mitre_tactics": [{"id": "TA0001", "name": "Initial Access", "link": "https://attack.mitre.org/tactics/TA0001"}],
+                "mitre_techniques": [{"id": "T1190", "name": "Exploit Public-Facing Application", "link": "https://attack.mitre.org/techniques/T1190"}]
+            }
+        elif 'malware' in signature_lower or 'malicious file' in description_lower:
+             mapping = {
+                "mitre_tactics": [{"id": "TA0002", "name": "Execution", "link": "https://attack.mitre.org/tactics/TA0002"}],
+                "mitre_techniques": [{"id": "T1204.002", "name": "User Execution: Malicious File", "link": "https://attack.mitre.org/techniques/T1204/002"}]
+            }
+    elif 'url blocked' in event_type_lower or 'content filter block' in event_type_lower:
+        if 'malware site' in description_lower or 'phishing' in description_lower:
+            mapping = {
+                "mitre_tactics": [{"id": "TA0011", "name": "Command and Control", "link": "https://attack.mitre.org/tactics/TA0011"}],
+                "mitre_techniques": [{"id": "T1071.001", "name": "Application Layer Protocol: Web Protocols", "link": "https://attack.mitre.org/techniques/T1071/001"}]
+            }
+    elif 'vpn connection' in event_type_lower:
+        if 'successful login' in description_lower: # More audit than attack
+             mapping = {
+                "mitre_tactics": [{"id": "TA0001", "name": "Initial Access", "link": "https://attack.mitre.org/tactics/TA0001"}],
+                "mitre_techniques": [{"id": "T1133", "name": "External Remote Services", "link": "https://attack.mitre.org/techniques/T1133"}]
+            }
+    if mapping:
+        print(f"Event type '{event_type}' mapped to MITRE: {mapping['mitre_tactics'][0]['name']} / {mapping['mitre_techniques'][0]['name']}")
+    return mapping
+
 # --- Functions ---
 def get_meraki_security_events():
     """Fetches security events from the Cisco Meraki API."""
@@ -64,35 +134,50 @@ def integrate_with_saps_intel(events):
         return None
 
 def main():
-    """Main function to fetch events and send them to configured endpoints."""
-    print("Attempting to fetch Meraki security events...")
-    meraki_events = get_meraki_security_events()
+    print("Fetching Meraki security events...")
+    meraki_events_response = get_meraki_security_events() 
+    
+    meraki_events_list = []
+    # Logic to ensure meraki_events_list is a list of events
+    if isinstance(meraki_events_response, list):
+        meraki_events_list = meraki_events_response
+    elif isinstance(meraki_events_response, dict) and 'events' in meraki_events_response and isinstance(meraki_events_response['events'], list):
+        # This handles cases where the API might return a dict with an 'events' key containing the list
+        meraki_events_list = meraki_events_response['events']
+    elif meraki_events_response: # If it's a single event object (dict but not the wrapper)
+        meraki_events_list = [meraki_events_response]
 
-    if meraki_events:
-        if isinstance(meraki_events, list) and meraki_events:
-            print(f"Successfully fetched {len(meraki_events)} Meraki event(s).")
-        elif isinstance(meraki_events, dict):
-            print(f"Fetched Meraki data (possibly a single event or info): {meraki_events}")
-            meraki_events = [meraki_events]
-        else:
-            print(f"Fetched Meraki data, but it's not in list format: {meraki_events}")
-            return
+    if not meraki_events_list:
+        print("No Meraki events fetched or response format not recognized.")
+        return
 
-        print("Attempting to send events to Microsoft Sentinel...")
-        sentinel_response_status = send_to_sentinel(meraki_events, sentinel_log_type)
-        if sentinel_response_status:
-            print(f"Microsoft Sentinel response status: {sentinel_response_status}")
-        else:
-            print("Failed to send events to Microsoft Sentinel or error occurred.")
+    print(f"Fetched {len(meraki_events_list)} Meraki event(s).")
+    
+    events_to_send = []
+    for event in meraki_events_list:
+        processed_event = event.copy() # Work with a copy
+        mitre_mapping = map_meraki_event_to_mitre(processed_event) # Pass the copy
+        if mitre_mapping:
+            processed_event['mitre_attack_mapping'] = mitre_mapping
+        events_to_send.append(processed_event)
 
-        print("Attempting to integrate events with SAPS Intelligence Operations...")
-        saps_intel_response_status = integrate_with_saps_intel(meraki_events)
-        if saps_intel_response_status:
-            print(f"SAPS Intel integration response status: {saps_intel_response_status}")
-        else:
-            print("Failed to integrate events with SAPS Intel or error occurred.")
+    if not events_to_send:
+        print("No events to send after processing.")
+        return
+
+    print(f"Sending {len(events_to_send)} events to Microsoft Sentinel...")
+    sentinel_response_status = send_to_sentinel(events_to_send, sentinel_log_type)
+    if sentinel_response_status:
+        print(f"Microsoft Sentinel response status: {sentinel_response_status}")
     else:
-        print("No Meraki security events fetched or an error occurred during fetching.")
+        print("Failed to send events to Microsoft Sentinel or error occurred.")
+
+    print(f"Integrating {len(events_to_send)} events with SAPS Intelligence Operations...")
+    saps_intel_response_status = integrate_with_saps_intel(events_to_send)
+    if saps_intel_response_status:
+        print(f"SAPS Intel integration response status: {saps_intel_response_status}")
+    else:
+        print("Failed to integrate events with SAPS Intel or error occurred.")
 
 if __name__ == "__main__":
     main()

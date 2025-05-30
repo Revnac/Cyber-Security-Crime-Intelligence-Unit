@@ -1,0 +1,1 @@
+Place downloaded ML models here (e.g., .h5, .dat files). They will be ignored by git.

@@ -65,58 +65,79 @@ async function plotLocations(ipAddresses) {
     }
 }
 
-// --- NEW getGeolocation function from the current subtask ---
-async function getGeolocation(ipAddress) {
-  const apiKey = process.env.REACT_APP_IPGEOLOCATION_API_KEY || 'YOUR_API_KEY_PLACEHOLDER';
+// Assume authService can be imported if this were a service module,
+// or token is passed if it's a utility function called from components.
+// For this iteration, let's modify it to accept a token.
+// import authService from '../services/authService'; // Not directly, pass token instead for this file.
 
+async function getGeolocation(ipAddress, token) { // Token is now an argument
   if (!ipAddress) {
     console.error('IP address is required for geolocation.');
-    return null; // Or throw new Error('IP address is required.');
+    return null;
   }
 
-  if (!apiKey || apiKey === 'YOUR_API_KEY_PLACEHOLDER') {
-    console.warn(
-      'IP Geolocation API key (REACT_APP_IPGEOLOCATION_API_KEY) is not configured or is a placeholder. ' +
-      'Cannot fetch live geolocation data. Returning null or mock data if implemented.'
-    );
-    return null; 
+  if (!token) {
+    console.warn('Authentication token not provided to getGeolocation. Cannot fetch live geolocation data via proxy.');
+    return null;
   }
 
-  const apiUrl = `https://api.ipgeolocation.io/ipgeo?apiKey=${apiKey}&ip=${ipAddress}`;
-  console.log(`Fetching live geolocation for IP: ${ipAddress} from ${apiUrl.replace(apiKey, 'REACT_APP_IPGEOLOCATION_API_KEY_USED')}`); // Avoid logging key
+  // Calls the backend proxy which uses the server-side API key
+  const apiUrl = `/api/util/ip-geolocation/${ipAddress}`; 
+  console.log(`Fetching proxied geolocation for IP: ${ipAddress} from ${apiUrl}`);
 
   try {
-    const response = await fetch(apiUrl);
+    const response = await fetch(apiUrl, {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`, // Send the JWT to the backend proxy
+      },
+    });
+
     if (!response.ok) {
-      const errorData = await response.json().catch(() => ({})); // Try to get error message from API
+      const errorData = await response.json().catch(() => ({}));
       throw new Error(
-        `API request failed with status ${response.status}: ${errorData.message || response.statusText || 'Unknown API error'}`
+        `API request to proxy failed with status ${response.status}: ${errorData.message || response.statusText || 'Unknown API error'}`
       );
     }
     const data = await response.json();
 
+    // Backend proxy returns a curated structure.
     if (data && data.latitude && data.longitude) {
       return { 
         lat: parseFloat(data.latitude), 
         lng: parseFloat(data.longitude), 
         city: data.city || 'Unknown city',
         country: data.country_name || 'Unknown country',
+        region: data.region_name || 'Unknown region',
         isp: data.isp || 'Unknown ISP',
-        fullResponse: data 
+        organization: data.organization || 'Unknown organization',
+        timezone: data.time_zone || 'Unknown timezone',
+        originalResponse: data // Keep the curated response from proxy
       };
     } else {
-      console.error('Invalid or incomplete data received from geolocation API:', data);
+      console.error('Invalid or incomplete data received from geolocation proxy:', data);
       if (data && data.message) {
-          throw new Error(`API returned error: ${data.message}`);
+          throw new Error(`Geolocation proxy returned error: ${data.message}`);
       }
       return null;
     }
   } catch (error) {
-    console.error('Error fetching geolocation data:', error);
-    throw error; 
+    console.error('Error fetching geolocation data via proxy:', error);
+    throw error;
   }
 }
-// --- END NEW getGeolocation function ---
+
+// The plotLocations function would need to be updated to get and pass the token if it's to use this directly.
+// Example:
+// async function plotLocations(ipAddresses, token) { // Now needs token
+//   // ...
+//   for (const ipAddress of ipAddresses) {
+//     const location = await getGeolocation(ipAddress, token); // Pass token
+//     // ...
+//   }
+// }
+// Or, preferably, components using this would call getGeolocation directly after getting token from useAuth.
 
 // Example Usage (uncomment to test, or call from your HTML/main script):
 /*

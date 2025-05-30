@@ -41,6 +41,13 @@ const WalletAddressSchema = new Schema({
     default: 0,
     index: true
   },
+  // Note on Balances: These fields (balance, totalReceived, totalSent) primarily track the native
+  // currency of the 'blockchain' (e.g., ETH for Ethereum, BTC for Bitcoin).
+  // For detailed balances of multiple tokens held by this address, a separate structure
+  // like 'tokenBalances: [{ tokenSymbol: 'USDT', contractAddress: '...', balance: 123.45 }]' 
+  // or a related 'TokenHolding' model would be necessary for advanced tracking.
+  // Current summary fields (totalReceived, totalSent, transactionCount) aggregate all
+  // transaction activity involving this address, which may include tokens if not filtered.
   riskScore: { // Calculated risk score, e.g., 0-100
     type: Number,
     min: 0,
@@ -48,12 +55,25 @@ const WalletAddressSchema = new Schema({
     index: true,
     default: null // Default to null or a neutral score
   },
+  aiRiskAssessment: {
+    score: { type: Number, min: 0, max: 100 }, // Example scale
+    level: { 
+      type: String, 
+      enum: ['Low', 'Medium', 'High', 'Critical', 'Unknown', null], // Allow null
+      default: null
+    },
+    lastCalculated: { type: Date },
+    modelVersion: { type: String, trim: true },
+    contributingFactors: [{ type: String, trim: true }] // Key factors influencing the score
+  },
   tags: [{ // e.g., 'exchange', 'miner', 'darknet_market', 'scam', 'victim'
     type: String,
     trim: true,
     lowercase: true,
     index: true
   }],
+  // Could include tags like 'holds_erc20_tokens', 'defi_user', or specific token symbols
+  // if not using a more structured approach for token balances/holdings.
   associatedEntityIds: [{ // Links to known entities
     type: Schema.Types.ObjectId,
     ref: 'Entity' // Assumes an 'Entity' model will be created

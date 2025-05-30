@@ -55,6 +55,18 @@ const EntitySchema = new Schema({
       trim: true
     }
   },
+  aiRiskAssessment: { // AI-driven risk assessment
+    score: { type: Number, min: 0, max: 100 }, // Example scale
+    level: { 
+      type: String, 
+      enum: ['Low', 'Medium', 'High', 'Critical', 'Unknown', null],
+      default: null 
+    },
+    lastCalculated: { type: Date },
+    modelVersion: { type: String, trim: true },
+    contributingFactors: [{ type: String, trim: true }],
+    derivedFromWalletRisk: { type: Boolean, default: false } // If score aggregates linked wallet AI risks
+  },
   contactInformation: {
     emails: [{ type: String, trim: true, lowercase: true }],
     phoneNumbers: [{ type: String, trim: true }],

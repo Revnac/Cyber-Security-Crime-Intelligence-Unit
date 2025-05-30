@@ -11,9 +11,15 @@ const path = require('path'); // For serving static files from React build
 // Import routes
 const crimeRoutes = require('./routes/crime');
 const authRoutes = require('./routes/auth'); // <<< ADD THIS
-const ingestionRoutes = require('./routes/ingestion'); // <<< ADD THIS
-const cryptoRoutes = require('./routes/cryptoRoutes'); // <<< ADD THIS
-const amlRoutes = require('./routes/amlRoutes'); // <<< ADD THIS
+const ingestionRoutes = require('./routes/ingestion'); // Existing for crypto (general or crypto-specific)
+const fiatIngestionRoutes = require('./routes/fiatIngestionRoutes');
+const locationIngestionRoutes = require('./routes/locationIngestionRoutes'); // <<< ADD THIS
+const cryptoRoutes = require('./routes/cryptoRoutes'); 
+const amlRoutes = require('./routes/amlRoutes'); 
+const utilityRoutes = require('./routes/utilityRoutes'); 
+const securityEventRoutes = require('./routes/securityEventRoutes'); 
+const fiatRoutes = require('./routes/fiatRoutes'); 
+const externalDataSourceRoutes = require('./routes/externalDataSourceRoutes'); 
 // const predictionRoutes = require('./routes/prediction'); // Placeholder for future prediction routes
 
 // Initialize Express app
@@ -30,12 +36,42 @@ const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/guardi
 // It is used for signing and verifying authentication tokens in routes/auth.js.
 // Example: process.env.JWT_SECRET
 // A strong, unique secret key is crucial for security.
+// CORS_ALLOWED_ORIGINS: Comma-separated list of allowed frontend origins. Defaults to http://localhost:3000 for dev.
+// Example: process.env.CORS_ALLOWED_ORIGINS="http://localhost:3000,https://your-frontend-domain.com"
 
 // --- Middleware ---
-app.use(helmet()); // Apply Helmet first for security headers
 
-// Enable CORS - configure appropriately for production (e.g., whitelist specific origins)
-app.use(cors());
+// Apply Helmet first for security headers
+// helmet() enables a suite of 15 middleware functions to set various HTTP headers,
+// providing good default protection against common web vulnerabilities.
+// For more advanced/specific configurations:
+// - Content Security Policy (CSP): Can be configured via helmet.contentSecurityPolicy({...}).
+//   This is a powerful feature to prevent XSS but requires careful policy definition
+//   based on all sources of content (scripts, styles, images, fonts, etc.).
+// - HTTP Strict Transport Security (HSTS): Can be configured via helmet.hsts({...}).
+//   Example (uncomment and configure carefully in production if HTTPS is fully set up):
+//   app.use(helmet.hsts({
+//     maxAge: 60 * 60 * 24 * 365, // 1 year in seconds
+//     includeSubDomains: true,
+//     preload: true
+//   }));
+app.use(helmet()); 
+
+// Enable CORS - configure appropriately for production
+const allowedOrigins = (process.env.CORS_ALLOWED_ORIGINS || 'http://localhost:3000').split(',');
+console.log("CORS Allowed Origins:", allowedOrigins); // Log for debugging, remove in deep production
+app.use(cors({
+  origin: function (origin, callback) {
+    // allow requests with no origin (like mobile apps or curl requests)
+    if (!origin) return callback(null, true);
+    if (allowedOrigins.indexOf(origin) === -1) {
+      const msg = 'The CORS policy for this site does not allow access from the specified Origin.';
+      return callback(new Error(msg), false);
+    }
+    return callback(null, true);
+  },
+  credentials: true // If you need to allow cookies/authorization headers
+}));
 
 // HTTP Request Logging
 if (process.env.NODE_ENV === 'development') {
@@ -88,12 +124,22 @@ mongoose.connect(MONGODB_URI, {
 });
 
 // --- API Routes ---
-app.use('/api/auth', authRoutes); // <<< ADD THIS LINE (preferably before other API routes)
+app.use('/api/auth', authRoutes); 
 // Prefix all crime routes with /api/crime
 app.use('/api/crime', crimeRoutes);
-app.use('/api/ingest', ingestionRoutes); // <<< ADD THIS
-app.use('/api/crypto', cryptoRoutes); // <<< ADD THIS
-app.use('/api/aml', amlRoutes); // <<< ADD THIS
+
+// Ingestion Routes
+app.use('/api/ingest', ingestionRoutes); // General or crypto-specific CSV ingestion
+app.use('/api/ingest/fiat', fiatIngestionRoutes);
+app.use('/api/ingest/location', locationIngestionRoutes); // <<< ADD THIS
+
+// Data Access/Manipulation Routes
+app.use('/api/crypto', cryptoRoutes); 
+app.use('/api/aml', amlRoutes); 
+app.use('/api/util', utilityRoutes); 
+app.use('/api/events', securityEventRoutes); 
+app.use('/api/fiat', fiatRoutes); 
+app.use('/api/external-sources', externalDataSourceRoutes); 
 // app.use('/api/prediction', predictionRoutes); // Future: wire up prediction routes
 
 // --- Serve React Frontend (Production) ---

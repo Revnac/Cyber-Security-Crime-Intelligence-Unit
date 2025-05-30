@@ -12,7 +12,15 @@ const AttachmentSchema = new Schema({
 
 const InvestigationNoteSchema = new Schema({
   note: { type: String, required: true, trim: true },
-  author: { type: Schema.Types.ObjectId, ref: 'User', required: true },
+  author: { 
+    type: Schema.Types.ObjectId, 
+    ref: 'User', 
+    required: false // <<< MODIFIED
+  }, 
+  isSystemGenerated: { // <<< ADDED
+    type: Boolean,
+    default: false
+  },
   timestamp: { type: Date, default: Date.now }
 }, { _id: true }); // _id: true to allow each note to have its own ID for easier updates/deletions if needed
 
@@ -42,9 +50,14 @@ const AMLCaseSchema = new Schema({
     trim: true,
     index: true
   },
-  triggeringTransactions: [{
+  triggeringCryptoTransactions: [{ // Renamed from triggeringTransactions
     type: Schema.Types.ObjectId,
     ref: 'CryptoTransaction'
+  }],
+  triggeringFiatTransactions: [{ // <<< ADDED
+    type: Schema.Types.ObjectId,
+    ref: 'FiatTransaction',
+    default: []
   }],
   triggeringWalletAddresses: [{
     type: Schema.Types.ObjectId,
@@ -62,6 +75,12 @@ const AMLCaseSchema = new Schema({
   detailedDescription: { // More detailed explanation or initial findings
     type: String,
     trim: true
+  },
+  totalCaseValueUSD: { // <<< ADDED
+    type: Number,
+    default: 0
+    // Estimated total value of all linked transactions (crypto and fiat) in USD. 
+    // May require a separate calculation step/service to update.
   },
   assignedTo: { // Analyst assigned to the case
     type: Schema.Types.ObjectId,
@@ -85,6 +104,12 @@ const AMLCaseSchema = new Schema({
   resolutionDetails: { // Details of how the case was resolved
     type: String,
     trim: true
+  },
+  aiInsights: { // <<< ADDED
+    confidenceOfAlert: { type: Number, min: 0, max: 1 }, // If case originated from an AI alert
+    suggestedNextActions: [{ type: String, trim: true }],
+    relatedPatternId: { type: String, trim: true, default: null }, // Link to a detected pattern
+    riskFactors: [{ type: String, trim: true }] // Key textual risk factors
   },
   sarFiled: { // Suspicious Activity Report details
     filed: { type: Boolean, default: false },

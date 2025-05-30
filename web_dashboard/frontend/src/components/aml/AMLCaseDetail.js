@@ -37,6 +37,13 @@ const AMLCaseDetail = () => {
   const [assigneeUserId, setAssigneeUserId] = useState(''); 
   // const { user: currentUser } = useAuth(); // If needed for frontend checks
 
+  // New states for linking transactions
+  const [linkFiatTxId, setLinkFiatTxId] = useState('');
+  const [linkCryptoTxId, setLinkCryptoTxId] = useState('');
+  const [isLinking, setIsLinking] = useState(false); // Can be boolean or string ('fiat', 'crypto')
+  const [linkError, setLinkError] = useState('');
+
+
   useEffect(() => {
     const fetchCaseDetails = async () => {
       if (!caseIdOrMongoID) {
@@ -76,6 +83,46 @@ const AMLCaseDetail = () => {
   );
 
   // --- Handler Functions for Case Management ---
+  const handleLinkFiatTx = async () => {
+    if (!linkFiatTxId.trim()) {
+      setLinkError('Please enter a Fiat Transaction ID to link.');
+      return;
+    }
+    setIsLinking('fiat'); setLinkError(''); setActionSuccess(''); // Clear other messages
+    try {
+      const updatedCase = await cryptoService.linkFiatTransactionToAMLCase(caseIdOrMongoID, linkFiatTxId.trim());
+      setAmlCase(updatedCase); // Refresh case details
+      setLinkFiatTxId(''); // Clear input
+      setActionSuccess('Fiat transaction linked successfully!'); 
+      setTimeout(() => setActionSuccess(''), 3000);
+    } catch (error) {
+      console.error("Error linking fiat transaction:", error);
+      setLinkError(error.message || 'Failed to link fiat transaction.');
+    } finally {
+      setIsLinking(false);
+    }
+  };
+
+  const handleLinkCryptoTx = async () => {
+    if (!linkCryptoTxId.trim()) {
+      setLinkError('Please enter a Crypto Transaction ID/Hash to link.');
+      return;
+    }
+    setIsLinking('crypto'); setLinkError(''); setActionSuccess(''); // Clear other messages
+    try {
+      const updatedCase = await cryptoService.linkCryptoTransactionToAMLCase(caseIdOrMongoID, linkCryptoTxId.trim());
+      setAmlCase(updatedCase); // Refresh case details
+      setLinkCryptoTxId(''); // Clear input
+      setActionSuccess('Crypto transaction linked successfully!');
+      setTimeout(() => setActionSuccess(''), 3000);
+    } catch (error) {
+      console.error("Error linking crypto transaction:", error);
+      setLinkError(error.message || 'Failed to link crypto transaction.');
+    } finally {
+      setIsLinking(false);
+    }
+  };
+
   const handleAddNote = async () => {
     if (!newNoteText.trim()) {
       setNoteError('Note cannot be empty.');
@@ -187,6 +234,21 @@ const AMLCaseDetail = () => {
         ) : <span style={styles.value}>None</span>}
       </div>
 
+      {/* Display Linked Fiat Transactions */}
+      <div style={styles.detailSection}>
+        <span style={styles.label}>Linked Fiat Transactions:</span>
+        {amlCase.triggeringFiatTransactions && amlCase.triggeringFiatTransactions.length > 0 ? (
+          <ul style={styles.subSection}>
+            {amlCase.triggeringFiatTransactions.map(fTx => (
+              <li key={fTx._id || fTx.internalTransactionId} style={styles.listItem}>
+                ID: {fTx.internalTransactionId || fTx._id} - {fTx.currencyCode} {fTx.amount?.toFixed(2)} on {new Date(fTx.timestamp).toLocaleDateString()}
+                {/* TODO: Link to a FiatTransactionDetail page if one exists later */}
+              </li>
+            ))}
+          </ul>
+        ) : <span style={styles.value}>None</span>}
+      </div>
+
       {/* Placeholder for Triggering Wallet Addresses - assuming these are ObjectIds or need more details */}
       <div style={styles.detailSection}>
         <span style={styles.label}>Triggering Wallet Addresses:</span>
@@ -220,11 +282,22 @@ const AMLCaseDetail = () => {
         {amlCase.investigationNotes && amlCase.investigationNotes.length > 0 ? (
           <div style={styles.subSection}>
             {amlCase.investigationNotes.slice().reverse().map(note => ( // Show newest notes first
-              <div key={note._id} style={styles.noteItem}>
+              <div 
+                key={note._id} 
+                style={
+                  note.isSystemGenerated || !note.author 
+                  ? {...styles.noteItem, backgroundColor: '#f0f5ff', borderLeft: '3px solid #007bff'} 
+                  : styles.noteItem
+                }
+              >
                 <p>{note.note}</p>
                 <small>
-                  <span style={styles.noteAuthor}>By: {note.author ? note.author.username : 'Unknown'}</span>
-                  <span style={styles.noteTimestamp}>At: {new Date(note.timestamp).toLocaleString()}</span>
+                  <span style={styles.noteAuthor}>
+                    By: {note.isSystemGenerated || !note.author ? 'System Automation' : (note.author.username || 'Unknown User')}
+                  </span>
+                  <span style={styles.noteTimestamp}>
+                    At: {new Date(note.timestamp).toLocaleString()}
+                  </span>
                 </small>
               </div>
             ))}
@@ -320,6 +393,42 @@ const AMLCaseDetail = () => {
           >
             {assigneeUserId.trim() ? 'Assign User' : 'Unassign User'}
           </button>
+        </div>
+
+        {/* --- Link Existing Transactions Section --- */}
+        <div style={{...styles.subSection, border: '1px solid #eee', padding: '15px', borderRadius: '5px', marginTop: '20px'}}>
+            <h4 style={{...styles.title, fontSize: '1.1em', borderBottom: 'none', marginBottom: '10px', color: '#333'}}>Link Existing Transactions to Case</h4>
+            {linkError && <p style={{...styles.error, marginBottom: '10px'}}>{linkError}</p>}
+            
+            {/* Link Fiat Tx */}
+            <div style={{ ...styles.formGroup, display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <input 
+                type="text" 
+                placeholder="Fiat Transaction MongoDB ID to link" 
+                value={linkFiatTxId} 
+                onChange={(e) => setLinkFiatTxId(e.target.value)}
+                style={{...styles.input, flexGrow: 1}}
+                disabled={isLinking || loading}
+                />
+                <button onClick={handleLinkFiatTx} style={styles.button} disabled={isLinking || !linkFiatTxId.trim() || loading}>
+                {isLinking === 'fiat' ? 'Linking...' : 'Link Fiat Tx'}
+                </button>
+            </div>
+
+            {/* Link Crypto Tx */}
+            <div style={{ ...styles.formGroup, display: 'flex', alignItems: 'center', gap: '10px', marginTop: '10px' }}>
+                <input 
+                type="text" 
+                placeholder="Crypto Transaction MongoDB ID to link" 
+                value={linkCryptoTxId} 
+                onChange={(e) => setLinkCryptoTxId(e.target.value)}
+                style={{...styles.input, flexGrow: 1}}
+                disabled={isLinking || loading}
+                />
+                <button onClick={handleLinkCryptoTx} style={styles.button} disabled={isLinking || !linkCryptoTxId.trim() || loading}>
+                {isLinking === 'crypto' ? 'Linking...' : 'Link Crypto Tx'}
+                </button>
+            </div>
         </div>
       </div>
     </div>

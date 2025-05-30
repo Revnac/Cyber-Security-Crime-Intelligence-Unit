@@ -70,8 +70,26 @@ const RegisterPage = () => {
           <input type="email" id="email" style={styles.input} value={email} onChange={(e) => setEmail(e.target.value)} required disabled={loading} />
         </div>
         <div style={styles.formGroup}>
-          <label htmlFor="password" style={styles.label}>Password (min 8 characters):</label>
-          <input type="password" id="password" style={styles.input} value={password} onChange={(e) => setPassword(e.target.value)} required disabled={loading} />
+          <label htmlFor="password" style={styles.label}>Password:</label>
+          <input 
+            type="password" 
+            id="password" 
+            style={styles.input} 
+            value={password} 
+            onChange={(e) => setPassword(e.target.value)} 
+            required 
+            disabled={loading} 
+          />
+          {/* New Password Policy Hint Text */}
+          <small style={{ display: 'block', marginTop: '5px', color: '#555' }}>
+            Password must be at least 12 characters long and include:
+            <ul style={{ margin: '2px 0 0 20px', paddingLeft: '0', fontSize: '0.9em' }}>
+              <li>At least one uppercase letter (A-Z)</li>
+              <li>At least one lowercase letter (a-z)</li>
+              <li>At least one number (0-9)</li>
+              <li>At least one special character (e.g., !@#$%^&*)</li>
+            </ul>
+          </small>
         </div>
         <div style={styles.formGroup}>
           <label htmlFor="confirmPassword" style={styles.label}>Confirm Password:</label>

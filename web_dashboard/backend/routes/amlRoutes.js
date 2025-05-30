@@ -5,6 +5,7 @@ const AMLCase = require('../models/AMLCase'); // Model for AML Cases
 const { protect, authorize } = require('../middleware/authMiddleware'); // Auth protection
 const { query, param, body, validationResult } = require('express-validator'); // <<< UPDATED
 const { auditLog } = require('../utils/logger'); // <<< ADDED
+const caseService = require('../services/caseService'); // <<< ADDED
 
 // GET /api/aml/cases - Fetch AML cases with pagination and filtering
 router.get(
@@ -68,7 +69,8 @@ router.get(
       // Select specific fields from populated documents to avoid sending sensitive data like user password hashes
       const cases = await AMLCase.find(queryFilters)
         .populate('assignedTo', 'username firstName lastName email') // Populate with selected user fields
-        .populate('triggeringTransactions', 'txHash blockchain valueUSD timestamp') // Populate with selected transaction fields
+        .populate('triggeringCryptoTransactions', 'txHash blockchain valueUSD timestamp tokenType contractAddress') // Populate with selected crypto transaction fields
+        .populate('triggeringFiatTransactions', 'internalTransactionId externalTransactionId transactionType currencyCode amount timestamp status') // Populate with selected fiat transaction fields
         // .populate('triggeringWalletAddresses', 'address blockchain riskScore tags') // Populate with selected wallet fields - can be heavy
         // .populate('associatedEntities', 'name type category') // Populate with selected entity fields - can be heavy
         .sort(sortOptions)
@@ -87,6 +89,78 @@ router.get(
     } catch (error) {
       console.error('Error fetching AML cases:', error);
       res.status(500).json({ message: 'Server error while fetching AML cases.', error: error.message });
+    }
+  }
+);
+
+// POST /api/aml/cases/:id/link-fiat-transaction - Link a fiat transaction to an AML case
+router.post(
+  '/cases/:id/link-fiat-transaction',
+  protect,
+  authorize(['Analyst', 'Investigator', 'Admin']),
+  [
+    param('id').isMongoId().withMessage('Invalid Case ID format.'),
+    body('fiatTransactionId').isMongoId().withMessage('Invalid Fiat Transaction ID format.')
+  ],
+  async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ message: 'Validation failed for linking fiat transaction.', errors: errors.array() });
+    }
+
+    try {
+      const updatedCase = await caseService.linkFiatTransactionToCase(req.params.id, req.body.fiatTransactionId, req.user._id.toString());
+      if (!updatedCase) { // Should be handled by service throwing error, but as a safeguard
+          return res.status(404).json({ message: 'AML Case not found or linking failed.' });
+      }
+      // Repopulate for consistent response
+      const populatedCase = await AMLCase.findById(updatedCase._id)
+        .populate('assignedTo', 'username email')
+        .populate('triggeringCryptoTransactions', 'txHash blockchain valueUSD timestamp tokenType contractAddress') 
+        .populate('triggeringFiatTransactions', 'internalTransactionId externalTransactionId transactionType currencyCode amount timestamp status')
+        .populate('investigationNotes.author', 'username');
+      res.json(populatedCase);
+    } catch (error) {
+      console.error(`Error linking fiat transaction to AML case ${req.params.id}:`, error);
+      if (error.message === 'AML Case not found.') return res.status(404).json({ message: error.message });
+      if (error.message.includes('required')) return res.status(400).json({ message: error.message }); // From service validation
+      res.status(500).json({ message: 'Server error while linking fiat transaction.', error: error.message });
+    }
+  }
+);
+
+// POST /api/aml/cases/:id/link-crypto-transaction - Link a crypto transaction to an AML case
+router.post(
+  '/cases/:id/link-crypto-transaction',
+  protect,
+  authorize(['Analyst', 'Investigator', 'Admin']),
+  [
+    param('id').isMongoId().withMessage('Invalid Case ID format.'),
+    body('cryptoTransactionId').isMongoId().withMessage('Invalid Crypto Transaction ID format.')
+  ],
+  async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ message: 'Validation failed for linking crypto transaction.', errors: errors.array() });
+    }
+
+    try {
+      const updatedCase = await caseService.linkCryptoTransactionToCase(req.params.id, req.body.cryptoTransactionId, req.user._id.toString());
+       if (!updatedCase) {
+          return res.status(404).json({ message: 'AML Case not found or linking failed.' });
+      }
+      // Repopulate for consistent response
+      const populatedCase = await AMLCase.findById(updatedCase._id)
+        .populate('assignedTo', 'username email')
+        .populate('triggeringCryptoTransactions', 'txHash blockchain valueUSD timestamp tokenType contractAddress')
+        .populate('triggeringFiatTransactions', 'internalTransactionId externalTransactionId transactionType currencyCode amount timestamp status')
+        .populate('investigationNotes.author', 'username');
+      res.json(populatedCase);
+    } catch (error) {
+      console.error(`Error linking crypto transaction to AML case ${req.params.id}:`, error);
+      if (error.message === 'AML Case not found.') return res.status(404).json({ message: error.message });
+      if (error.message.includes('required')) return res.status(400).json({ message: error.message });
+      res.status(500).json({ message: 'Server error while linking crypto transaction.', error: error.message });
     }
   }
 );
@@ -133,7 +207,8 @@ router.post(
       // Repopulate for consistent response
       const populatedCase = await AMLCase.findById(savedCase._id)
         .populate('assignedTo', 'username email')
-        .populate('triggeringTransactions', 'txHash blockchain valueUSD timestamp')
+        .populate('triggeringCryptoTransactions', 'txHash blockchain valueUSD timestamp tokenType contractAddress')
+        .populate('triggeringFiatTransactions', 'internalTransactionId externalTransactionId transactionType currencyCode amount timestamp status')
         .populate('investigationNotes.author', 'username');
 
       res.status(201).json(populatedCase); // Return the updated case with the new note
@@ -171,7 +246,8 @@ router.get(
     try {
       const amlCase = await AMLCase.findById(req.params.id)
         .populate('assignedTo', 'username email')
-        .populate('triggeringTransactions', 'txHash blockchain valueUSD timestamp')
+        .populate('triggeringCryptoTransactions', 'txHash blockchain valueUSD timestamp tokenType contractAddress')
+        .populate('triggeringFiatTransactions', 'internalTransactionId externalTransactionId transactionType currencyCode amount timestamp status')
         .populate('investigationNotes.author', 'username'); // Populate author of notes
 
       if (!amlCase) {
@@ -254,7 +330,8 @@ router.put(
       // Repopulate for consistent response with GET /cases/:id
       const populatedUpdate = await AMLCase.findById(updatedCase._id)
         .populate('assignedTo', 'username email')
-        .populate('triggeringTransactions', 'txHash blockchain valueUSD timestamp')
+        .populate('triggeringCryptoTransactions', 'txHash blockchain valueUSD timestamp tokenType contractAddress')
+        .populate('triggeringFiatTransactions', 'internalTransactionId externalTransactionId transactionType currencyCode amount timestamp status')
         .populate('investigationNotes.author', 'username');
 
       res.json(populatedUpdate);

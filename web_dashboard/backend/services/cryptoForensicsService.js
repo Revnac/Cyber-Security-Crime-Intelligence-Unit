@@ -1,207 +1,213 @@
 // web_dashboard/backend/services/cryptoForensicsService.js
 const CryptoTransaction = require('../models/CryptoTransaction');
-// const WalletAddress = require('../models/WalletAddress'); // WalletAddress model might be useful for context but not strictly for traversal if tx data is rich
+// const WalletAddress = require('../models/WalletAddress'); // For enriching node data later
+
+const MAX_NODES_IN_TRACE = 200; // Limit total nodes (addresses + txs) to prevent runaway queries
+const MAX_QUERIES_IN_TRACE = 100; // Limit total DB queries
 
 const traceFunds = async (startIdentifier, identifierType, direction, blockchain, maxHops, options = {}) => {
-  console.log(`Starting fund tracing: ID=${startIdentifier}, Type=${identifierType}, Dir=${direction}, Hops=${maxHops}, Chain=${blockchain}`);
-
+  // Parameter validation
   if (!startIdentifier || !identifierType || !direction || !blockchain || maxHops === undefined) {
-    throw new Error("Missing required parameters for fund tracing.");
+    throw new Error("Missing required parameters for fund tracing (startIdentifier, identifierType, direction, blockchain, maxHops).");
   }
-  if (maxHops <= 0 || maxHops > 5) { // Limit hops for performance
-    throw new Error("Max hops must be between 1 and 5 for this version.");
+  if (!['address', 'tx'].includes(identifierType)) {
+    throw new Error("Invalid identifierType. Must be 'address' or 'tx'.");
   }
+  if (!['forward', 'backward', 'both'].includes(direction)) {
+    throw new Error("Invalid direction. Must be 'forward', 'backward', or 'both'.");
+  }
+  if (typeof maxHops !== 'number' || maxHops <= 0 || maxHops > 5) { // Max 5 hops for this version
+    throw new Error("Max hops must be an integer between 1 and 5.");
+  }
+  console.log(`TRACE_FUNDS_START: ID=${startIdentifier}, Type=${identifierType}, Dir=${direction}, Hops=${maxHops}, Chain=${blockchain}`);
 
   const results = {
-    nodes: new Map(), // id -> { id, type, label, properties }
-    edges: [],      // { source, target, type, properties }
-    // paths: [], // For more complex path reconstruction later
+    nodes: new Map(), // id (address or txHash) -> { id, type, label, blockchain, ...properties }
+    edges: [],      // { source, target, relationship, blockchain, amount, tokenType, contractAddress, label }
     summary: {
       startIdentifier, identifierType, direction, blockchain, maxHops,
       hopsReached: 0,
       foundTransactions: 0,
       foundAddresses: 0,
-    }
+      queriesMade: 0,
+      warning: null,
+    },
   };
 
-  const visitedTransactions = new Set(); // Store tx._id.toString()
-  const visitedAddresses = new Set();   // Store "address_blockchain" string
+  const visitedTxHashes = new Set();    // Stores "txHash_blockchain" to ensure tx uniqueness per blockchain
+  const visitedAddresses = new Set(); // Stores "address_blockchain"
 
-  const addNode = (id, type, label, properties = {}) => {
-    if (!results.nodes.has(id)) {
-      results.nodes.set(id, { id, type, label, ...properties });
+  const addNode = (id, type, labelPrefix, properties = {}) => {
+    const nodeKey = (type === 'transaction' && properties.txHash) ? properties.txHash : id; // Use txHash for tx nodes if available, else id
+    if (results.nodes.size >= MAX_NODES_IN_TRACE) {
+      results.summary.warning = results.summary.warning || `Trace truncated: Maximum node limit (${MAX_NODES_IN_TRACE}) reached.`;
+      return false; 
+    }
+    if (!results.nodes.has(nodeKey)) {
+      const label = `${labelPrefix}: ${String(nodeKey).substring(0, 10)}...`;
+      results.nodes.set(nodeKey, { id: nodeKey, type, label, blockchain, ...properties });
       if (type === 'address') results.summary.foundAddresses++;
       if (type === 'transaction') results.summary.foundTransactions++;
     }
+    return true;
   };
 
   const addEdge = (source, target, relationship, properties = {}) => {
-    results.edges.push({ source, target, relationship, ...properties });
+    results.edges.push({ 
+        source, target, relationship, blockchain, 
+        amount: properties.amount, 
+        tokenType: properties.tokenType, 
+        contractAddress: properties.contractAddress,
+        label: `${properties.amount !== undefined ? properties.amount.toFixed(4) : ''} ${properties.tokenType === 'Native' ? blockchain : properties.tokenType || blockchain}`
+    });
   };
 
-  let addressesToExploreNextHop = new Set();
-  let currentHop = 0;
+  let queue = []; // Elements will be { id, type, hop }
 
-  // Initial population based on startIdentifier
+  // Initialize queue with the starting identifier
   if (identifierType === 'address') {
-    const initialAddressKey = `${startIdentifier}_${blockchain}`;
-    if (!visitedAddresses.has(initialAddressKey)) {
-      addNode(startIdentifier, 'address', `Addr: ${startIdentifier.substring(0, 10)}...`, { blockchain });
-      addressesToExploreNextHop.add(startIdentifier);
-      visitedAddresses.add(initialAddressKey);
+    const addressKey = `${startIdentifier}_${blockchain}`;
+    if (!visitedAddresses.has(addressKey)) {
+      if (addNode(startIdentifier, 'address', 'Addr', { address: startIdentifier } )) {
+        queue.push({ id: startIdentifier, type: 'address', hop: 0 });
+        visitedAddresses.add(addressKey);
+      }
     }
   } else if (identifierType === 'tx') {
     const startTx = await CryptoTransaction.findOne({ txHash: startIdentifier, blockchain: blockchain }).lean();
-    if (startTx && !visitedTransactions.has(startTx._id.toString())) {
-      addNode(startTx.txHash, 'transaction', `Tx: ${startTx.txHash.substring(0, 10)}...`, { timestamp: startTx.timestamp, valueUSD: startTx.valueUSD, blockchain });
-      visitedTransactions.add(startTx._id.toString());
-      results.summary.hopsReached = 1; // Initial tx counts as first "hop" of sorts or discovery
-
-      if (direction === 'forward' || direction === 'both') {
-        startTx.outputs.forEach(output => {
-          if (output.address) {
-            const addrKey = `${output.address}_${blockchain}`;
-            if (!visitedAddresses.has(addrKey)) { // Check before adding to explore
-                addressesToExploreNextHop.add(output.address);
-            }
-            // Add node & edge regardless of visit for exploration, graph structure needs it
-            addNode(output.address, 'address', `Addr: ${output.address.substring(0,10)}...`, { blockchain });
-            addEdge(startTx.txHash, output.address, 'sends_to', { amount: output.amount });
-          }
-        });
-      }
-      if (direction === 'backward' || direction === 'both') {
-        startTx.inputs.forEach(input => {
-          if (input.address) {
-            const addrKey = `${input.address}_${blockchain}`;
-            if(!visitedAddresses.has(addrKey)) {
-                addressesToExploreNextHop.add(input.address);
-            }
-            addNode(input.address, 'address', `Addr: ${input.address.substring(0,10)}...`, { blockchain });
-            addEdge(input.address, startTx.txHash, 'receives_from', { amount: input.amount });
-          }
-        });
-      }
-    } else if (!startTx) {
-        console.warn(`TraceFunds: Starting transaction ${startIdentifier} not found on ${blockchain}.`);
-        results.nodes = Array.from(results.nodes.values()); return results; // Early exit
-    }
-  }
-
-
-  // Iterative Tracing
-  for (currentHop = (identifierType === 'tx' ? 1 : 0) ; currentHop < maxHops; currentHop++) {
-    if (addressesToExploreNextHop.size === 0) break;
-    results.summary.hopsReached = currentHop + 1;
-
-    const addressesThisHop = Array.from(addressesToExploreNextHop);
-    addressesToExploreNextHop = new Set(); // Reset for the *next* hop
-
-    for (const address of addressesThisHop) {
-      const addressKey = `${address}_${blockchain}`;
-      if (visitedAddresses.has(addressKey) && currentHop > 0 && identifierType === 'address') { 
-          // If it's an address start, the first address is already "visited" but needs processing for hop 0->1
-          // For subsequent hops, if address already fully processed, skip.
-          // This simple visitedAddresses check might need refinement for full cycle detection vs. re-exploration limits
-          // For now, if an address was a seed for a previous hop's transaction search, we might re-evaluate its txs.
-          // A more robust approach is to mark addresses as "fully explored for this direction/hop_level".
-      }
-      visitedAddresses.add(addressKey); // Mark as visited for future direct exploration
-      addNode(address, 'address', `Addr: ${address.substring(0, 10)}...`, { blockchain });
-
-
-      let query = {};
-      if (direction === 'forward') {
-        query = { 'inputs.address': address, blockchain: blockchain };
-      } else if (direction === 'backward') {
-        query = { 'outputs.address': address, blockchain: blockchain };
-      } else { // 'both'
-        query = { $or: [{ 'inputs.address': address }, { 'outputs.address': address }], blockchain: blockchain };
-      }
-      
-      // Note on Blockchain Specificity:
-      // For UTXO-based chains (e.g., Bitcoin), an input address implies the entire UTXO value is spent.
-      // The 'amount' on the input edge should reflect the value of that specific input.
-      // For account-based chains (e.g., Ethereum), a transaction has one 'from' address (sender)
-      // and one 'to' address (receiver) for the primary value transfer.
-      // This implementation uses a generic model assuming inputs[].address and outputs[].address.
-
-      const transactions = await CryptoTransaction.find(query).lean();
-
-      for (const tx of transactions) {
-        if (visitedTransactions.has(tx._id.toString())) continue;
-        
-        addNode(tx.txHash, 'transaction', `Tx: ${tx.txHash.substring(0, 10)}...`, { timestamp: tx.timestamp, valueUSD: tx.valueUSD, blockchain });
-        visitedTransactions.add(tx._id.toString());
-
-        if (direction === 'forward') {
-          // Edge from current address to this transaction
-          const inputDetail = tx.inputs.find(inp => inp.address === address);
-          addEdge(address, tx.txHash, 'sent_to_tx', { amount: inputDetail ? inputDetail.amount : undefined });
-          // Add output addresses of this transaction for the next hop
-          tx.outputs.forEach(output => {
-            if (output.address) {
-                addressesToExploreNextHop.add(output.address);
-                addNode(output.address, 'address', `Addr: ${output.address.substring(0,10)}...`, { blockchain }); // Add node early
-                addEdge(tx.txHash, output.address, 'sends_to', {amount: output.amount}); // Edge from tx to output addr
-            }
-          });
-        } else if (direction === 'backward') {
-          // Edge from this transaction to current address
-          const outputDetail = tx.outputs.find(out => out.address === address);
-          addEdge(tx.txHash, address, 'received_from_tx', { amount: outputDetail ? outputDetail.amount : undefined });
-          // Add input addresses of this transaction for the next hop
-          tx.inputs.forEach(input => {
-            if (input.address) {
-                addressesToExploreNextHop.add(input.address);
-                addNode(input.address, 'address', `Addr: ${input.address.substring(0,10)}...`, { blockchain }); // Add node early
-                addEdge(input.address, tx.txHash, 'receives_from', {amount: input.amount}); // Edge from input addr to tx
-            }
-          });
-        } else { // 'both' - more complex to define edges simply, this part needs careful thought for 'both'
-            // Simplified: if current address is an input, then tx outputs are "forward"
-            // if current address is an output, then tx inputs are "backward"
-            let addressIsInput = tx.inputs.some(inp => inp.address === address);
-            let addressIsOutput = tx.outputs.some(out => out.address === address);
-
-            if (addressIsInput) {
-                const inputDetail = tx.inputs.find(inp => inp.address === address);
-                addEdge(address, tx.txHash, 'sent_to_tx_in_both_trace', { amount: inputDetail ? inputDetail.amount : undefined });
-                tx.outputs.forEach(output => {
-                    if (output.address) {
-                        addressesToExploreNextHop.add(output.address);
-                        addNode(output.address, 'address', `Addr: ${output.address.substring(0,10)}...`, { blockchain });
-                        addEdge(tx.txHash, output.address, 'sends_to_in_both_trace', { amount: output.amount });
-                    }
-                });
-            }
-            if (addressIsOutput) {
-                 const outputDetail = tx.outputs.find(out => out.address === address);
-                addEdge(tx.txHash, address, 'received_from_tx_in_both_trace', { amount: outputDetail ? outputDetail.amount : undefined });
-                tx.inputs.forEach(input => {
-                    if (input.address) {
-                        addressesToExploreNextHop.add(input.address);
-                        addNode(input.address, 'address', `Addr: ${input.address.substring(0,10)}...`, { blockchain });
-                        addEdge(input.address, tx.txHash, 'receives_from_in_both_trace', { amount: input.amount });
-                    }
-                });
-            }
+    results.summary.queriesMade++;
+    if (startTx) {
+      const txKey = `${startTx.txHash}_${startTx.blockchain}`;
+      if (!visitedTxHashes.has(txKey)) {
+        if (addNode(startTx.txHash, 'transaction', 'Tx', { 
+            txHash: startTx.txHash, timestamp: startTx.timestamp, valueUSD: startTx.valueUSD, 
+            tokenType: startTx.tokenType, contractAddress: startTx.contractAddress 
+        })) {
+          visitedTxHashes.add(txKey);
+          queue.push({ id: startTx.txHash, type: 'transaction', hop: 0 });
         }
       }
+    } else {
+      results.summary.warning = `Starting transaction ${startIdentifier} not found on ${blockchain}.`;
     }
   }
   
-  // Performance Considerations:
-  // - Deep hops or addresses with thousands of transactions can be very slow.
-  // - Ensure database fields used in queries are indexed.
-  // - For very large graphs, consider query limits, timeouts, or background job processing.
-  // - Graph databases (e.g., Neo4j) are specialized for this type of traversal.
+  let currentProcessingHop = 0;
+  while (currentProcessingHop < maxHops && queue.length > 0 && results.nodes.size < MAX_NODES_IN_TRACE && results.summary.queriesMade < MAX_QUERIES_IN_TRACE) {
+    results.summary.hopsReached = currentProcessingHop + 1;
+    const nextHopQueue = [];
+    
+    for (const item of queue) {
+      if (item.type === 'address') {
+        const currentAddress = item.id;
+        let dbQuery = { blockchain };
+        
+        if (direction === 'forward') dbQuery['inputs.address'] = currentAddress;
+        else if (direction === 'backward') dbQuery['outputs.address'] = currentAddress;
+        else dbQuery.$or = [{ 'inputs.address': currentAddress }, { 'outputs.address': currentAddress }];
+        
+        const transactions = await CryptoTransaction.find(dbQuery).limit(20).lean();
+        results.summary.queriesMade++;
+
+        for (const tx of transactions) {
+          const txKey = `${tx.txHash}_${tx.blockchain}`;
+          if (visitedTxHashes.has(txKey) || results.nodes.size >= MAX_NODES_IN_TRACE) continue;
+          
+          if (!addNode(tx.txHash, 'transaction', 'Tx', { 
+              txHash: tx.txHash, timestamp: tx.timestamp, valueUSD: tx.valueUSD, 
+              tokenType: tx.tokenType, contractAddress: tx.contractAddress 
+          })) break; // Node limit reached
+          visitedTxHashes.add(txKey);
+
+          if (direction === 'forward') {
+            const inputDetail = tx.inputs.find(i => i.address === currentAddress);
+            addEdge(currentAddress, tx.txHash, 'SENT_FROM_ADDRESS_TO_TX', { amount: inputDetail?.amount, tokenType: tx.tokenType, contractAddress: tx.contractAddress });
+            tx.outputs.forEach(o => { if(o.address) nextHopQueue.push({ id: o.address, type: 'address', hop: currentProcessingHop + 1 }); });
+          } else if (direction === 'backward') {
+            const outputDetail = tx.outputs.find(o => o.address === currentAddress);
+            addEdge(tx.txHash, currentAddress, 'RECEIVED_AT_ADDRESS_FROM_TX', { amount: outputDetail?.amount, tokenType: tx.tokenType, contractAddress: tx.contractAddress });
+            tx.inputs.forEach(i => { if(i.address) nextHopQueue.push({ id: i.address, type: 'address', hop: currentProcessingHop + 1 }); });
+          } else { // 'both'
+             tx.inputs.forEach(i => {
+                if (i.address) {
+                    if (i.address === currentAddress) {
+                        addEdge(currentAddress, tx.txHash, 'SENT_FROM_ADDRESS_TO_TX_BOTH', { amount: i.amount, tokenType: tx.tokenType, contractAddress: tx.contractAddress });
+                    } else { // Other input addresses
+                        nextHopQueue.push({ id: i.address, type: 'address', hop: currentProcessingHop + 1 });
+                        // Edge from other input addresses to this tx
+                        addNode(i.address, 'address', 'Addr', { address: i.address });
+                        addEdge(i.address, tx.txHash, 'SENT_FROM_ADDRESS_TO_TX_BOTH', { amount: i.amount, tokenType: tx.tokenType, contractAddress: tx.contractAddress });
+                    }
+                }
+             });
+             tx.outputs.forEach(o => {
+                if (o.address) {
+                    if (o.address === currentAddress) {
+                        addEdge(tx.txHash, currentAddress, 'RECEIVED_AT_ADDRESS_FROM_TX_BOTH', { amount: o.amount, tokenType: tx.tokenType, contractAddress: tx.contractAddress });
+                    } else { // Other output addresses
+                        nextHopQueue.push({ id: o.address, type: 'address', hop: currentProcessingHop + 1 });
+                        // Edge from this tx to other output addresses
+                        addNode(o.address, 'address', 'Addr', { address: o.address });
+                        addEdge(tx.txHash, o.address, 'RECEIVED_AT_ADDRESS_FROM_TX_BOTH', { amount: o.amount, tokenType: tx.tokenType, contractAddress: tx.contractAddress });
+                    }
+                }
+             });
+          }
+        }
+      } else { // item.type === 'transaction'
+          const currentTxHash = item.id;
+          const currentTx = await CryptoTransaction.findOne({ txHash: currentTxHash, blockchain: blockchain }).lean(); // Fetch if only hash was queued
+          results.summary.queriesMade++;
+          if (!currentTx) continue;
+
+          if (direction === 'forward' || direction === 'both') {
+            currentTx.outputs.forEach(o => { 
+                if(o.address) nextHopQueue.push({ id: o.address, type: 'address', hop: currentProcessingHop + 1 }); 
+                // Edges from this Tx to its outputs were already added when this Tx was discovered
+            });
+          }
+          if (direction === 'backward' || direction === 'both') {
+            currentTx.inputs.forEach(i => { 
+                if(i.address) nextHopQueue.push({ id: i.address, type: 'address', hop: currentProcessingHop + 1 }); 
+                // Edges from inputs to this Tx were already added
+            });
+          }
+      }
+      if (results.nodes.size >= MAX_NODES_IN_TRACE || results.summary.queriesMade >= MAX_QUERIES_IN_TRACE) {
+          results.summary.warning = results.summary.warning || `Trace truncated: Resource limit reached (Nodes: ${results.nodes.size}/${MAX_NODES_IN_TRACE}, Queries: ${results.summary.queriesMade}/${MAX_QUERIES_IN_TRACE}).`;
+          break;
+      }
+    }
+    queue = [];
+    for (const nextItem of nextHopQueue) {
+        const itemKey = `${nextItem.id}_${blockchain}`;
+        if (!visitedAddresses.has(itemKey) && nextItem.type === 'address') { // Only add addresses to main queue for next hop processing
+            queue.push(nextItem);
+            visitedAddresses.add(itemKey); 
+        } else if (!visitedTxHashes.has(itemKey) && nextItem.type === 'transaction') {
+            // This case should be rare if we primarily explore address -> tx -> address
+            queue.push(nextItem);
+            visitedTxHashes.add(itemKey);
+        }
+    }
+    currentProcessingHop++;
+  }
+
+  if (results.nodes.size === 0 && !results.summary.warning) {
+      results.summary.warning = "No transactions or addresses found related to the start identifier.";
+  }
+  if (currentProcessingHop < maxHops && !results.summary.warning && results.nodes.size > 0) {
+      results.summary.hopsReached = currentProcessingHop; // Actual hops explored if ended early
+  } else if (results.nodes.size === 0) {
+      results.summary.hopsReached = 0;
+  }
+
+
+  // TODO: Path reconstruction (results.paths) is deferred.
 
   results.nodes = Array.from(results.nodes.values());
-  console.log(`Fund tracing complete. Hops: ${results.summary.hopsReached}, Found Txs: ${results.summary.foundTransactions}, Found Addrs: ${results.summary.foundAddresses}`);
+  console.log(`TRACE_FUNDS_END: Hops: ${results.summary.hopsReached}, Txs: ${results.summary.foundTransactions}, Addrs: ${results.summary.foundAddresses}, Queries: ${results.summary.queriesMade}, Warning: ${results.summary.warning}`);
   return results;
 };
 
-module.exports = {
-  traceFunds,
-};
+module.exports = { traceFunds };

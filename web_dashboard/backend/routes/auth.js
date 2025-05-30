@@ -21,7 +21,12 @@ const registerValidationRules = [
   body('username').trim().isLength({ min: 3 }).withMessage('Username must be at least 3 characters long.')
     .isAlphanumeric().withMessage('Username must be alphanumeric.'),
   body('email').isEmail().withMessage('Please provide a valid email address.').normalizeEmail(),
-  body('password').isLength({ min: 8 }).withMessage('Password must be at least 8 characters long.'),
+  body('password')
+    .isLength({ min: 12 }).withMessage('Password must be at least 12 characters long.')
+    .matches(/[a-z]/).withMessage('Password must contain at least one lowercase letter.')
+    .matches(/[A-Z]/).withMessage('Password must contain at least one uppercase letter.')
+    .matches(/[0-9]/).withMessage('Password must contain at least one number.')
+    .matches(/[\W_]/).withMessage('Password must contain at least one special character (e.g., !@#$%^&*).'), // \W matches non-alphanumeric, _ is included for underscore
   body('firstName').optional().trim().escape(),
   body('lastName').optional().trim().escape(),
   // Example for roles: ensure it's an array and values are within the enum defined in User model
@@ -39,7 +44,7 @@ router.post('/register', registerValidationRules, async (req, res) => {
   }
 
   try {
-    const { username, password, email, firstName, lastName, roles } = req.body;
+    const { username, password, email, firstName, lastName } = req.body; // Removed 'roles' from destructuring
 
     // Check if user already exists
     let existingUser = await User.findOne({ $or: [{ username: username.toLowerCase() }, { email: email.toLowerCase() }] });
@@ -48,17 +53,25 @@ router.post('/register', registerValidationRules, async (req, res) => {
     }
 
     // Create new user object
-    const newUser = new User({
-      username,
-      password, // Password will be hashed by the pre-save hook in userSchema
-      email,
+    const newUserPayload = {
+      username: username.toLowerCase(), // Ensure consistent casing
+      password, 
+      email: email.toLowerCase(), // Ensure consistent casing
       firstName,
-      lastName,
-      roles // Ensure roles are validated against enum in schema or provide default
-    });
+      lastName
+      // DO NOT include roles: req.body.roles here for self-registration
+      // Let the Mongoose schema default roles to ['ReadOnly']
+    };
 
-    // Save the new user
+    // If an admin were creating users via this route (less common for a public /register), 
+    // they might be allowed to specify roles. That would require role check here:
+    // if (req.user && req.user.roles && req.user.roles.includes('Admin') && req.body.roles) {
+    //   newUserPayload.roles = req.body.roles; // Only admin can set roles
+    // }
+    
+    const newUser = new User(newUserPayload);
     const savedUser = await newUser.save();
+
 
     // Respond without the password
     const userResponse = {

@@ -1,6 +1,88 @@
 // web_dashboard/backend/services/caseService.js
+const mongoose = require('mongoose'); // <<< ADDED
 const AMLCase = require('../models/AMLCase');
+const CryptoTransaction = require('../models/CryptoTransaction'); // <<< ADDED
+const FiatTransaction = require('../models/FiatTransaction');   // <<< ADDED
 const { auditLog } = require('../utils/logger'); // For logging case creation
+
+// Internal function for background enrichment
+async function enrichCaseDetails(amlCaseDocument, triggeredByUserId = 'System_Enrichment_Service') {
+  if (!amlCaseDocument) return;
+
+  try {
+    console.log(`Enriching AML Case: ${amlCaseDocument.caseId}`);
+    let enrichmentNotes = [`Automated Case Enrichment Summary (Timestamp: ${new Date().toISOString()}):`];
+    let detailsFound = false;
+
+    // Fetch and summarize Crypto Transactions
+    if (amlCaseDocument.triggeringCryptoTransactions && amlCaseDocument.triggeringCryptoTransactions.length > 0) {
+      enrichmentNotes.push(`
+Linked Crypto Transactions (${amlCaseDocument.triggeringCryptoTransactions.length}):`);
+      const cryptoTxDetails = await CryptoTransaction.find({ 
+        '_id': { $in: amlCaseDocument.triggeringCryptoTransactions } 
+      }).lean().limit(5); // Limit to avoid overly long notes for now
+      
+      if (cryptoTxDetails.length > 0) detailsFound = true;
+      cryptoTxDetails.forEach(tx => {
+        enrichmentNotes.push(`  - ID: ${tx.txHash || tx._id}, Blockchain: ${tx.blockchain}, Value: ${tx.valueUSD !== undefined ? '$'+tx.valueUSD.toFixed(2) : 'N/A'}, Date: ${new Date(tx.timestamp).toLocaleDateString()}`);
+      });
+      if (amlCaseDocument.triggeringCryptoTransactions.length > cryptoTxDetails.length) {
+        enrichmentNotes.push(`  (...and ${amlCaseDocument.triggeringCryptoTransactions.length - cryptoTxDetails.length} more crypto transactions)`);
+      }
+    }
+
+    // Fetch and summarize Fiat Transactions
+    if (amlCaseDocument.triggeringFiatTransactions && amlCaseDocument.triggeringFiatTransactions.length > 0) {
+      enrichmentNotes.push(`
+Linked Fiat Transactions (${amlCaseDocument.triggeringFiatTransactions.length}):`);
+      const fiatTxDetails = await FiatTransaction.find({ 
+        '_id': { $in: amlCaseDocument.triggeringFiatTransactions } 
+      }).lean().limit(5);
+
+      if (fiatTxDetails.length > 0) detailsFound = true;
+      fiatTxDetails.forEach(tx => {
+        enrichmentNotes.push(`  - ID: ${tx.internalTransactionId || tx._id}, Currency: ${tx.currencyCode}, Amount: ${tx.amount?.toFixed(2)}, Date: ${new Date(tx.timestamp).toLocaleDateString()}`);
+      });
+      if (amlCaseDocument.triggeringFiatTransactions.length > fiatTxDetails.length) {
+        enrichmentNotes.push(`  (...and ${amlCaseDocument.triggeringFiatTransactions.length - fiatTxDetails.length} more fiat transactions)`);
+      }
+    }
+    
+    // TODO: Future: Fetch WalletAddress stats for triggeringWalletAddresses
+    // TODO: Future: Fetch Entity details for associatedEntities
+
+    if (detailsFound) {
+      const systemNoteContent = enrichmentNotes.join('\n');
+      console.log(`AML Case ${amlCaseDocument.caseId}: Adding system enrichment note.`);
+      // Old auditLog for 'AML_CASE_ENRICHMENT_DATA_PREPARED' is removed.
+
+      amlCaseDocument.investigationNotes.push({
+          note: systemNoteContent,
+          author: null, // Author is now optional in InvestigationNoteSchema
+          isSystemGenerated: true, // Set the new flag
+          timestamp: new Date() 
+      });
+      
+      await amlCaseDocument.save(); // Save the case with the new note
+
+      auditLog('INFO', 'AML_CASE_ENRICHED_WITH_NOTE', triggeredByUserId, { 
+          caseId: amlCaseDocument.caseId, 
+          caseMongoId: amlCaseDocument._id,
+          notePreview: systemNoteContent.substring(0,100) 
+      });
+      console.log(`AML Case ${amlCaseDocument.caseId} successfully enriched with a system note.`);
+
+    } else {
+      console.log(`No specific details to add as enrichment note for AML Case: ${amlCaseDocument.caseId}`);
+      // Optionally, log to audit that enrichment was attempted but no new info was added
+      // auditLog('INFO', 'AML_CASE_ENRICHMENT_NO_NEW_INFO', triggeredByUserId, { caseId: amlCaseDocument.caseId });
+    }
+
+  } catch (error) {
+    console.error(`Error during AML case enrichment for ${amlCaseDocument.caseId}:`, error.message);
+    auditLog('ERROR', 'AML_CASE_ENRICHMENT_FAILURE', triggeredByUserId, { caseId: amlCaseDocument.caseId, error: error.message });
+  }
+}
 
 /**
  * Creates a new AML Case from alert data.
@@ -30,25 +112,30 @@ const createCaseFromAlert = async (alertData, triggeredByUserId = 'System') => {
       status: 'New', // Default status for new cases
       priority: alertData.priority || 'Medium',
       ruleTriggered: alertData.ruleTriggered,
-      // Ensure triggeringTransactions is an array of ObjectIds if relatedTransactionId is primary
-      triggeringTransactions: alertData.triggeringTransactions || (alertData.relatedTransactionId ? [alertData.relatedTransactionId] : []),
-      // For triggeringWalletAddresses and associatedEntities, if they are arrays of strings (like addresses),
-      // we'd ideally map them to corresponding _id references from WalletAddress/Entity models.
-      // This is a complex step involving DB lookups and will be deferred for now.
-      // For this iteration, if they are strings, they will not be directly queryable as refs yet.
-      // The AMLCase schema expects ObjectIds for these.
-      // For now, we'll pass them as is if they are just strings/basic info from alertData,
-      // or ensure they are empty arrays if not provided.
-      // This part needs careful handling based on what `amlEngineService` provides in `alertData`.
-      // Let's assume `amlEngineService` provides an array of `ObjectId`s if possible, or we handle it here.
-      // For now, let's assume `alertData.triggeringWalletAddresses` might be address strings from watchlist.
-      // We will NOT try to convert them to ObjectIds in this step to keep it focused.
-      // This means these fields in AMLCase might not be correctly populated with refs yet.
-      triggeringWalletAddresses: alertData.triggeringWalletAddresses || [], // Placeholder for actual ObjectId refs
-      associatedEntities: alertData.associatedEntities || [],       // Placeholder for actual ObjectId refs
+      // Ensure this maps to the renamed field in AMLCase model
+      triggeringCryptoTransactions: alertData.triggeringTransactions || (alertData.relatedTransactionId ? [alertData.relatedTransactionId] : []),
+      // Add the new field for fiat transactions
+      triggeringFiatTransactions: alertData.triggeringFiatTransactions || [], 
+      
+      // These fields in alertData were previously:
+      // triggeringWalletAddresses: alertData.triggeringWalletAddresses || [], 
+      // associatedEntities: alertData.associatedEntities || [],
+      // Ensure AMLCase model still expects these directly or if they need to be part of the transaction objects.
+      // Based on AMLCase schema (turn 166), it expects ObjectIds for these.
+      // The alertData from amlEngineService (turn 176) for watchlist hits provides:
+      // triggeringWalletAddresses: Array.from(hitAddresses) (array of strings)
+      // associatedEntities: watchlistItem.associatedEntity ? [watchlistItem.associatedEntity] : [] (array of ObjectIds or empty)
+      // This means triggeringWalletAddresses needs resolution to ObjectIds before saving to AMLCase if strict ref integrity is desired.
+      // For now, we'll pass as is, and Mongoose might not populate if they aren't ObjectIds.
+      // This is a known item for future refinement (linking string addresses to WalletAddress._ids).
+      triggeringWalletAddresses: alertData.triggeringWalletAddresses || [], 
+      associatedEntities: alertData.associatedEntities || [],
+
       summary: alertData.summary,
       detailedDescription: alertData.detailedDescription || '', // Optional
       openedAt: new Date(),
+      // totalCaseValueUSD will default to 0 as per schema.
+      // TODO: Add logic later to calculate or update totalCaseValueUSD based on linked transactions.
       // assignedTo can be set later through case management actions
     };
 
@@ -56,22 +143,29 @@ const createCaseFromAlert = async (alertData, triggeredByUserId = 'System') => {
     const savedCase = await amlCase.save();
 
     console.log(`AML Case created successfully: ${savedCase.caseId}`);
+    // Ensure auditLog details are updated if field names changed (e.g. relatedTx)
     auditLog('INFO', 'AML_CASE_CREATED_SUCCESS', triggeredByUserId, { 
       caseId: savedCase.caseId, 
       rule: savedCase.ruleTriggered,
       priority: savedCase.priority,
-      relatedTx: savedCase.triggeringTransactions.length > 0 ? savedCase.triggeringTransactions[0] : null 
+      // Update if relatedTx was referencing the old field name
+      relatedCryptoTx: savedCase.triggeringCryptoTransactions.length > 0 ? savedCase.triggeringCryptoTransactions[0] : null 
     });
+
+    // Asynchronously enrich case details (fire-and-forget)
+    enrichCaseDetails(savedCase, triggeredByUserId)
+      .then(() => console.log(`Background enrichment for case ${savedCase.caseId} initiated.`))
+      .catch(err => console.error(`Background enrichment for case ${savedCase.caseId} failed to initiate or completed with error:`, err.message));
 
     return savedCase;
 
   } catch (error) {
     console.error('Error creating AML case in CaseService:', error.message);
     auditLog('ERROR', 'AML_CASE_CREATION_FAILURE', triggeredByUserId, { 
-      alertRule: alertData.ruleTriggered, 
+      alertRule: alertData ? alertData.ruleTriggered : 'Unknown', // Guard against alertData being null if error is very early
       error: error.message 
     });
-    return null;
+    throw error; // Re-throw to be caught by the route handler
   }
 };
 
@@ -84,5 +178,7 @@ const createCaseFromAlert = async (alertData, triggeredByUserId = 'System') => {
 
 module.exports = {
   createCaseFromAlert,
+  linkFiatTransactionToCase, // <<< ADD THIS
+  linkCryptoTransactionToCase, // <<< ADD THIS
   // ... other functions when added
 };

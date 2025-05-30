@@ -16,6 +16,8 @@ const processTransaction = async (transactionData) => {
     throw new Error('Missing required fields (txHash, blockchain, timestamp) for transaction.');
   }
 
+  // If transactionData includes tokenType and contractAddress, they will be saved.
+  // Future enhancements to WalletAddress updates might use these for token-specific logic.
   let savedTransaction; 
 
   try {
@@ -181,6 +183,12 @@ const ingestTransactionsFromCSV = async (filePath) => {
                   if (output.amount !== undefined) output.amount = parseFloat(output.amount);
               });
           }
+          
+          // TODO X.1.3: Map tokenType and contractAddress if available in CSV
+          // Example:
+          // if (row['token_type']) transactionData.tokenType = row['token_type'];
+          // if (row['contract_address']) transactionData.contractAddress = row['contract_address'];
+          // Also, ensure the columnMapping includes these if they have different CSV header names.
 
           await processTransaction(transactionData); // processTransaction is in the same file
           savedCount++;

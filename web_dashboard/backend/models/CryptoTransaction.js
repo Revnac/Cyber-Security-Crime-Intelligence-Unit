@@ -4,7 +4,9 @@ const Schema = mongoose.Schema;
 
 const CryptoTransactionInputSchema = new Schema({
   address: { type: String, index: true }, // Sender address
-  amount: { type: Number, required: true },
+  amount: { type: Number, required: true }, 
+  // Mongoose Number (double) is used. For extreme precision needs,
+  // consider mongoose-long or Decimal128 if standard doubles are insufficient.
   previousTxHash: { type: String }, // For UTXO models like Bitcoin
   index: { type: Number } // Output index in previous transaction for UTXO
 }, { _id: false });
@@ -12,6 +14,8 @@ const CryptoTransactionInputSchema = new Schema({
 const CryptoTransactionOutputSchema = new Schema({
   address: { type: String, required: true, index: true }, // Recipient address
   amount: { type: Number, required: true },
+  // Mongoose Number (double) is used. For extreme precision needs,
+  // consider mongoose-long or Decimal128 if standard doubles are insufficient.
   scriptType: { type: String }, // e.g., P2PKH, P2SH for Bitcoin; or address type for account models
   spent: { type: Boolean, default: false }, // For UTXO, indicates if this output has been spent
   spentInTxHash: { type: String, default: null } // If spent, the tx hash where it was used as an input
@@ -28,6 +32,17 @@ const CryptoTransactionSchema = new Schema({
     type: String,
     required: true,
     index: true
+  },
+  tokenType: { // e.g., 'Native', 'ERC-20', 'BEP-20', 'SPL'
+    type: String,
+    default: 'Native',
+    index: true
+  },
+  contractAddress: { // Token's contract address if tokenType is not 'Native'
+    type: String,
+    default: null,
+    index: true,
+    sparse: true // Allows nulls and still maintains uniqueness if combined with other fields
   },
   blockHeight: { // Block number where the transaction was included
     type: Number,
@@ -47,13 +62,18 @@ const CryptoTransactionSchema = new Schema({
   fee: { 
     type: Number 
   },
-  metadata: { // For any other blockchain-specific details or enrichment data
-    type: Schema.Types.Mixed,
-    default: {}
-    // Examples: 
-    // 'tags': ['suspicious', 'exchange_deposit'],
-    // 'source_of_funds_confidence': 'medium',
-    // 'destination_category': 'gambling_site'
+  metadata: { 
+    type: Schema.Types.Mixed, 
+    default: {} 
+    // For tokens, could store: 
+    // tokenDetails: { symbol: 'USDT', name: 'Tether', decimals: 6 }
+    // This would be populated during ingestion based on contractAddress.
+  },
+  aiTransactionScore: {
+    score: { type: Number, min: 0, max: 1 }, // e.g., probability or normalized risk
+    isAnomaly: { type: Boolean, default: false },
+    modelVersion: { type: String, trim: true },
+    anomalyType: { type: String, trim: true, default: null } // e.g., 'Structuring', 'UnusualVolume'
   },
   createdAt: { // Record creation timestamp in our system
     type: Date,
@@ -65,6 +85,9 @@ const CryptoTransactionSchema = new Schema({
 CryptoTransactionSchema.index({ blockchain: 1, 'inputs.address': 1 });
 CryptoTransactionSchema.index({ blockchain: 1, 'outputs.address': 1 });
 CryptoTransactionSchema.index({ blockchain: 1, timestamp: -1 }); // Sort by time for a specific blockchain
+CryptoTransactionSchema.index({ blockchain: 1, tokenType: 1 });
+CryptoTransactionSchema.index({ blockchain: 1, contractAddress: 1, tokenType: 1 }, { sparse: true });
+
 
 // TTL index for automatic data archival/deletion if needed in the future
 // Example: Expire documents 7 years after their transaction timestamp

@@ -14,6 +14,11 @@ import CryptoTransactionDetail from './components/crypto/CryptoTransactionDetail
 import AMLCaseList from './components/aml/AMLCaseList'; // <<< ADD THIS
 import WalletAddressList from './components/crypto/WalletAddressList'; // <<< ADD THIS
 import AMLCaseDetail from './components/aml/AMLCaseDetail'; // <<< ADD THIS
+import SecurityEventList from './components/mitre/SecurityEventList'; // <<< ADD THIS
+import SecurityEventDetail from './components/mitre/SecurityEventDetail'; // <<< ADD THIS as per current task
+import FiatCSVUpload from './components/ingestion/FiatCSVUpload'; // <<< ADD THIS
+import FiatTransactionList from './components/fiat/FiatTransactionList'; // <<< ADD THIS
+import FundsTracePage from './pages/FundsTracePage'; // <<< ADD THIS
 
 // A simple protected route component
 const ProtectedRoute = ({ children }) => {
@@ -90,6 +95,10 @@ function App() {
               <li><Link to="/crypto-transactions">Crypto Transactions</Link></li> {/* <<< ADD THIS */}
               <li><Link to="/aml-cases">AML Cases</Link></li> {/* <<< ADD THIS */}
               <li><Link to="/wallet-addresses">Wallet Addresses</Link></li> {/* <<< ADD THIS */}
+              <li><Link to="/security-events">Security Events</Link></li> {/* <<< ADD THIS */}
+              <li><Link to="/ingest-fiat-csv">Ingest Fiat CSV</Link></li> {/* <<< ADD THIS */}
+              <li><Link to="/fiat-transactions">Fiat Transactions</Link></li> {/* <<< ADD THIS */}
+              <li><Link to="/funds-trace">Funds Tracer</Link></li> {/* <<< ADD THIS */}
             </ul>
           </nav>
           
@@ -151,6 +160,46 @@ function App() {
               element={
                 <ProtectedRoute>
                   <AMLCaseDetail />
+                </ProtectedRoute>
+              }
+            /> {/* <<< ADD THIS */}
+            <Route 
+              path="/security-events"
+              element={
+                <ProtectedRoute>
+                  <SecurityEventList />
+                </ProtectedRoute>
+              }
+            /> {/* <<< ADD THIS */}
+            <Route 
+              path="/ingest-fiat-csv"
+              element={
+                <ProtectedRoute>
+                  <FiatCSVUpload />
+                </ProtectedRoute>
+              }
+            /> {/* <<< ADD THIS */}
+            <Route 
+              path="/fiat-transactions"
+              element={
+                <ProtectedRoute>
+                  <FiatTransactionList />
+                </ProtectedRoute>
+              }
+            /> {/* <<< ADD THIS */}
+            <Route 
+              path="/security-event/:eventId" 
+              element={
+                <ProtectedRoute>
+                  <SecurityEventDetail />
+                </ProtectedRoute>
+              }
+            /> {/* <<< ADD THIS */}
+            <Route 
+              path="/funds-trace"
+              element={
+                <ProtectedRoute>
+                  <FundsTracePage />
                 </ProtectedRoute>
               }
             /> {/* <<< ADD THIS */}

@@ -26,6 +26,7 @@ The project is organized into several key components:
     -   **`frontend/`**: React-based user interface.
         -   `src/components/CrimeMap.js`: Displays crime incidents on a Google Map.
         -   `src/components/CrimeChart.js`: Displays crime trends using Recharts.
+        -   `src/components/mitre/SecurityEventList.js`: Displays a list of security events from various sources, including ingested alerts from Microsoft Sentinel (identifiable by `eventSource: 'Microsoft-Sentinel-alert'` or `'Microsoft-Sentinel-incident'`). Includes filtering by MITRE ATT&CK IDs, severity, source, etc.
         -   `src/App.js`: Main React application component.
         -   `package.json`: Frontend dependencies and scripts.
     -   **`backend/`**: Node.js (Express) application providing APIs for the frontend.
@@ -74,10 +75,9 @@ Detailed setup instructions for each component are provided below. Ensure all AP
     -   **Dependency**: THREE.js. Include this library in your HTML file.
     -   **HTML Requirement**: A `<canvas id='canvas'></canvas>` element.
 -   **`ip_geolocator.js`**:
-    -   **Dependency**: Google Maps API (for `plotLocations` function, if used for plotting). The `getGeolocation` function itself does not directly use Google Maps.
-    -   **HTML Requirement (for `plotLocations`)**: A `<div id='map'></div>` element.
-    -   **Configuration for `getGeolocation`**: For live IP geolocation, an API key from a service like `ipgeolocation.io` is required. This key must be provided as an environment variable named `REACT_APP_IPGEOLOCATION_API_KEY` when building or running the React application (if `ip_geolocator.js` is used within a React component that calls it). If the key is not provided, the function will not fetch live data.
-    -   **Note**: The `plotLocations` function in this script also requires the Google Maps API to be loaded for map rendering. Ensure your Google Maps API key is also correctly configured (typically in `CrimeMap.js` or similar via `REACT_APP_GOOGLE_MAPS_API_KEY`).
+    -   **Functionality**: Provides a `getGeolocation(ipAddress, token)` function that calls a backend proxy endpoint (`/api/util/ip-geolocation/:ipAddress`) to fetch geolocation data for an IP address. The backend proxy handles the actual external API call and API key management.
+    -   **Authentication**: The calling frontend component must provide a valid JWT authentication token to `getGeolocation`.
+    -   **Note**: The `plotLocations` function in this script (if used) would also need to be adapted to receive and pass this token when calling `getGeolocation`. It also requires the Google Maps API for map rendering.
 -   **Usage**: Include these scripts in an HTML file that provides the required canvas/div elements and library dependencies.
 
 ### 5. Web Dashboard (`web_dashboard/`)
@@ -97,10 +97,18 @@ Detailed setup instructions for each component are provided below. Ensure all AP
 
 #### Backend (Node.js/Express App - `web_dashboard/backend/`)
 -   **Purpose**: Provides API endpoints for crime data.
--   **Dependencies**: `express`, `mongoose`, `cors`, `dotenv` (see `package.json`).
--   **Configuration**:
-    -   MongoDB Connection String: In `app.js`, update `MONGODB_URI` or set it as an environment variable. Example: `mongodb://localhost:27017/guardian_ai_saps_db`.
-    -   The server runs on port 3001 by default (configurable via `PORT` environment variable or in `app.js`).
+-   **Dependencies**: `express`, `mongoose`, `cors`, `dotenv`, `axios`, `helmet`, `express-rate-limit`, `morgan`, `jsonwebtoken`, `bcryptjs`, `express-validator`, `multer` (see `package.json`).
+-   **Configuration (Environment Variables)**:
+    -   `PORT`: Port for the backend server (e.g., `3001`).
+    -   `MONGODB_URI`: MongoDB connection string (e.g., `mongodb://localhost:27017/guardian_ai_saps_db`).
+    -   `JWT_SECRET`: Secret key for signing JWT authentication tokens (must be a strong, unique string).
+    -   `IPGEOLOCATION_API_KEY`: API key for the external IP geolocation service (e.g., from ipgeolocation.io) used by the `/api/util/ip-geolocation` proxy endpoint. This key is managed on the server-side.
+    -   `SENTINEL_TENANT_ID`: Your Azure Tenant ID for Microsoft Sentinel integration.
+    -   `SENTINEL_CLIENT_ID`: The Application (client) ID of an Azure AD App Registration that has appropriate permissions (e.g., `SecurityEvents.Read.All`, `Incidents.Read.All`) for the Microsoft Graph Security API.
+    -   `SENTINEL_CLIENT_SECRET`: The client secret for the Azure AD App Registration.
+    -   `SENTINEL_GRAPH_API_ENDPOINT`: (Optional) The Microsoft Graph API endpoint for security data. Defaults to `https://graph.microsoft.com/v1.0/security`. Can be changed for different clouds (e.g., government clouds) or to use the `/beta` endpoint.
+    -   `FACE_REC_PY_SERVICE_URL`: (New) URL for the Python-based Face Recognition microservice. Defaults to `http://localhost:5002` if not set (this default is in `faceRecognitionService.js`). This service handles face enrollment, identification, etc.
+    -   These are typically set in a `.env` file in the `web_dashboard/backend/` directory, which is loaded by `dotenv`.
 -   **Setup & Running**:
     ```bash
     cd web_dashboard/backend
@@ -109,6 +117,29 @@ Detailed setup instructions for each component are provided below. Ensure all AP
     # or
     # npm start   # Starts the server with node
     ```
+
+#### Triggering Microsoft Sentinel Alert Ingestion
+
+Once the backend is configured with the necessary Sentinel API credentials (see Environment Variables), you can trigger the ingestion of alerts/incidents from Sentinel.
+
+*   **Endpoint:** `POST /api/external-sources/sentinel/ingest-alerts`
+*   **Authentication:** Requires JWT token from an authenticated user with appropriate roles (e.g., 'Admin', 'SystemAutomationRole').
+*   **Request Body (Optional JSON):**
+    ```json
+    {
+      "resourceType": "alerts", // or "incidents" (defaults to "alerts")
+      "fetchParams": {
+        "top": 50, // Max number of items to fetch
+        "$filter": "severity eq 'high' and status ne 'resolved'", // OData filter string
+        "$orderby": "createdDateTime desc" // OData orderby string
+      }
+    }
+    ```
+    If the body is empty, default parameters will be used (e.g., fetch latest 25 alerts).
+*   **Response:**
+    *   `202 Accepted`: Indicates the ingestion process has been initiated in the background.
+    *   Check server logs for progress and completion status, including any errors during fetching or processing.
+*   **Note:** This process fetches data from Sentinel, transforms it according to the mapping defined in `docs/SENTINEL_TO_SECURITY_EVENT_MAPPING.md`, and saves it as `SecurityEvent` documents in the platform's database.
 
 ### 6. Prediction Service (`prediction_service/crime_prediction.py`)
 -   **Purpose**: Python script for training a crime prediction model.

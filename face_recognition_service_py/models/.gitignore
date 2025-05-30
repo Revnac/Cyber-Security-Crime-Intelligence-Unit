@@ -1,0 +1,25 @@
+# Ignore large model files and other non-repository items
+*.h5
+*.dat
+*.pb
+*.pt
+*.onnx
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*build*/
+*dist*/
+*.data
+*.lib
+*.egg-info/
+*.so
+*.dylib
+# Virtual environment
+venv/
+env/
+.env
+.venv
+# Specific to this project if needed
+!placeholder.txt 
+# (Add a placeholder.txt if git won't track an empty directory with only .gitignore)

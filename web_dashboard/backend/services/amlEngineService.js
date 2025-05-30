@@ -16,10 +16,10 @@ const checkTransactionThreshold = (transaction) => {
       ruleTriggered: 'HIGH_VALUE_TRANSACTION',
       summary: `Transaction ${transaction.txHash || transaction._id} for $${transaction.valueUSD} exceeded threshold of $${thresholdUSD}.`,
       priority: 'Medium',
-      relatedTransactionId: transaction._id, // Assumes transaction object has _id
-      triggeringTransactions: [transaction._id], // For consistency with AMLCase schema
-      triggeringWalletAddresses: [], // This rule is primarily about the transaction itself
+      triggeringTransactions: [transaction._id], // Standardized field
+      triggeringWalletAddresses: [], 
       associatedEntities: []
+      // relatedTransactionId field removed as triggeringTransactions is now standard
     };
   }
   return null;
@@ -68,10 +68,12 @@ const checkAgainstWatchlist = async (transaction) => {
           ruleTriggered: 'DB_WATCHLIST_HIT',
           summary: `Transaction ${transaction.txHash || transaction._id} involves DB watchlisted address: ${addressString} (type: ${type}, Watchlist Risk: ${watchlistItem.riskLevel}).`,
           priority: alertPriority,
-          relatedTransactionId: transaction._id,
-          triggeringTransactions: [transaction._id],
-          triggeringWalletAddresses: [addressString], // TODO: Future: Convert to WalletAddress._id. For now, stores the string.
+          triggeringTransactions: [transaction._id], // Standardized field
+          // TODO X.3.2: Resolve hitAddress strings to WalletAddress._ids before passing to caseService
+          // For now, caseService is aware it might receive strings here.
+          triggeringWalletAddresses: [addressString], 
           associatedEntities: watchlistItem.associatedEntity ? [watchlistItem.associatedEntity] : [],
+          // relatedTransactionId field removed
           watchlistMatchDetails: {
             watchlistId: watchlistItem._id,
             identifier: watchlistItem.identifier,
@@ -142,6 +144,19 @@ const analyzeTransaction = async (transactionDoc) => {
 
   return triggeredAlertsData;
 };
+
+// TODO X.B.1.1: Future Enhancement for Direct Fiat AML Analysis
+// If AML rules need to be applied directly to fiat transactions upon their ingestion (similar to crypto),
+// a new function like `analyzeFiatTransaction(fiatTransactionDocument, triggeredByUserId)` could be created.
+// This function would:
+// 1. Take a FiatTransaction document as input.
+// 2. Apply specific AML rules relevant to fiat movements (e.g., structuring with cash,
+//    unusual international transfers, transactions with high-risk country counterparts).
+// 3. Generate alertData objects, ensuring fields like `triggeringFiatTransactions` are populated.
+// 4. This alertData would then be passed to `caseService.createCaseFromAlert`.
+// For now, fiat transactions are primarily linked to cases manually or if their details
+// are part of an alert generated from other sources (e.g., crypto transaction analysis leading
+// to investigation of related fiat accounts).
 
 module.exports = {
   analyzeTransaction,

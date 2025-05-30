@@ -1,0 +1,13 @@
+Flask
+Werkzeug # For file handling with Flask, often installed with Flask but good to specify
+python-dotenv # For managing environment variables like model paths or port
+
+# Core ML/CV Libraries (as per user's Python script)
+opencv-python
+dlib
+tensorflow
+numpy
+
+# Optional, but good for API development:
+gunicorn # WSGI server for production
+requests # If this service needs to call other APIs
