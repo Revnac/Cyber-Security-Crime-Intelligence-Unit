@@ -1,0 +1,35 @@
+@startuml
+!theme plain
+title Forensics Lab Floor Plan
+
+rectangle "Forensics Lab" {
+    rectangle "Secure Zone" {
+        rectangle "Evidence Vault" as Vault {
+            [Evidence Locker 1]
+            [Evidence Locker 2]
+        }
+        rectangle "Imaging & Analysis Room" as AnalysisRoom {
+            [Imaging Station]
+            [Forensics Workstation 1]
+            [Forensics Workstation 2]
+        }
+    }
+    rectangle "Office Zone" {
+        [Analyst Office]
+        [Meeting Room]
+    }
+}
+
+note right of Vault
+  - Access Control: Biometric + Key Card
+  - 24/7 CCTV Monitoring
+  - No external network connections
+end note
+
+note right of AnalysisRoom
+  - Access Control: Key Card
+  - Workstations on segregated VLANs
+  - No personal devices allowed
+end note
+
+@enduml

@@ -1,0 +1,34 @@
+# Docker Compose for deploying containerized forensics tools.
+# Note: These images are for commercial software and may require
+# authentication to a private Docker registry.
+version: '3.8'
+services:
+  magnet_axiom:
+    image: magnetforensics/axiom:latest
+    container_name: magnet_axiom
+    restart: unless-stopped
+    network_mode: bridge
+    ports:
+      - "8443:8443" # Using 8443 for HTTPS, a common practice
+    volumes:
+      - axiom_data:/data # Persist case data
+      - axiom_logs:/logs # Persist logs
+
+  passware:
+    image: passware/kitforensic:latest
+    container_name: passware_kit_forensic
+    restart: unless-stopped
+    network_mode: bridge
+    volumes:
+      - passware_data:/data # Persist case data
+      - passware_logs:/logs # Persist logs
+
+volumes:
+  axiom_data:
+    driver: local
+  axiom_logs:
+    driver: local
+  passware_data:
+    driver: local
+  passware_logs:
+    driver: local

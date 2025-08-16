@@ -1,0 +1,52 @@
+@startuml
+!theme plain
+title Forensics Lab Network Diagram
+
+cloud "Internet" as Inet
+
+node "Firewall" {
+  [Gateway] as FW
+}
+
+package "Forensics Lab" {
+  node "Management VLAN (10)" {
+    [Management Server] as MgmtSrv
+  }
+
+  node "Analysis VLAN (20)" {
+    [Forensics Workstation 1] as WS1
+    [Forensics Workstation 2] as WS2
+  }
+
+  node "Evidence VLAN (30)" {
+    [Evidence Storage (NAS)] as NAS
+  }
+
+  node "Quarantine VLAN (40)" {
+    [Malware Analysis VM] as MalwareVM
+  }
+}
+
+Inet -- FW
+
+FW -- MgmtSrv
+FW -- WS1
+FW -- WS2
+FW -- NAS
+FW -- MalwareVM
+
+WS1 -- NAS
+WS2 -- NAS
+MgmtSrv -- NAS
+MgmtSrv -- WS1
+MgmtSrv -- WS2
+
+note right of FW
+  Firewall Rules:
+  - Default Deny All
+  - Allow limited outbound from Analysis VLAN
+  - Block all outbound from Evidence & Quarantine VLANs
+  - Allow management access from specific IPs
+end note
+
+@enduml

@@ -1,0 +1,31 @@
+---
+- name: Harden and Configure Forensics Workstation
+  hosts: all
+  become: yes
+  vars:
+    forensics_packages:
+      - autopsy
+      - sleuthkit
+      - guymager
+      - volatility
+      - wireshark
+      - libguestfs-tools
+  tasks:
+    - name: Update apt cache and upgrade system packages
+      ansible.builtin.apt:
+        update_cache: yes
+        upgrade: dist
+        cache_valid_time: 3600 # Cache for 1 hour
+
+    - name: Install essential forensics packages
+      ansible.builtin.apt:
+        name: "{{ forensics_packages }}"
+        state: present
+
+    - name: Ensure forensics directory exists
+      ansible.builtin.file:
+        path: /mnt/forensics/evidence
+        state: directory
+        mode: '0750'
+        owner: root
+        group: root
